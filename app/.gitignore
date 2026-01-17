@@ -1,0 +1,7 @@
+# Rust build artifacts
+target/
+
+# NuttX build artifacts
+.built
+.depend
+Make.dep

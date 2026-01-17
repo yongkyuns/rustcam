@@ -1,0 +1,33 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config EXAMPLES_RUSTCAM
+	tristate "Rust Camera App (Rust std demo)"
+	default n
+	---help---
+		ESP32-S3 Camera application with Rust std support.
+		Includes memory profiler and interactive thread demo.
+
+if EXAMPLES_RUSTCAM
+
+config EXAMPLES_RUSTCAM_PROGNAME
+	string "Program name"
+	default "rustcam"
+	---help---
+		This is the name of the program that will be used when the
+		program is installed.
+
+config EXAMPLES_RUSTCAM_PRIORITY
+	int "Rust Camera task priority"
+	default 100
+
+config EXAMPLES_RUSTCAM_STACKSIZE
+	int "Rust Camera stack size"
+	default 8192
+	---help---
+		Stack size for the Rust Camera app. Needs to be larger than
+		default due to thread spawning and std library usage.
+
+endif

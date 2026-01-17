@@ -1,0 +1,22 @@
+{
+  "llvm-target": "xtensa-none-elf",
+  "data-layout": "e-m:e-p:32:32-v1:8:8-i64:64-i128:128-n32",
+  "arch": "xtensa",
+  "target-pointer-width": "32",
+  "target-endian": "little",
+  "target-c-int-width": 32,
+  "target-family": ["unix"],
+  "os": "nuttx",
+  "env": "",
+  "vendor": "espressif",
+  "linker-flavor": "gcc",
+  "linker": "xtensa-esp32s3-elf-gcc",
+  "executables": false,
+  "cpu": "esp32s3",
+  "max-atomic-width": 32,
+  "atomic-cas": true,
+  "panic-strategy": "abort",
+  "relocation-model": "static",
+  "emit-debug-gdb-scripts": false,
+  "has-thread-local": false
+}
