@@ -34,7 +34,7 @@ RUST_TARGET_NAME = xtensa-esp32s3-nuttx-elf
 context::
 	@echo "Building Rust code for ESP32-S3 NuttX..."
 	NUTTX_INCLUDE_DIR=$(TOPDIR)/include:$(TOPDIR)/include/arch \
-	cargo build --release -Zbuild-std=std,panic_abort \
+	cargo build --lib --release -Zbuild-std=std,panic_abort \
 		-Zbuild-std-features=panic_immediate_abort \
 		--manifest-path $(APPDIR)/examples/rustcam/Cargo.toml \
 		--target $(RUST_TARGET_SPEC)
