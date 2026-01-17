@@ -7,9 +7,25 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  # Fast native Linux build
+  linux:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build native binary
+        run: cargo build --manifest-path app/Cargo.toml --bin rustcam
+
+      - name: Run tests
+        run: echo "m\nq" | cargo run --manifest-path app/Cargo.toml --bin rustcam
+
+  # NuttX ESP32-S3 firmware build
+  nuttx:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,23 +36,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git \
-            wget \
-            flex \
-            bison \
-            gperf \
-            python3 \
-            python3-pip \
-            python3-venv \
-            cmake \
-            ninja-build \
-            ccache \
-            libffi-dev \
-            libssl-dev \
-            dfu-util \
-            libusb-1.0-0 \
-            kconfig-frontends \
-            genromfs
+            git wget flex bison gperf \
+            python3 python3-pip python3-venv \
+            cmake ninja-build ccache \
+            libffi-dev libssl-dev \
+            dfu-util libusb-1.0-0 \
+            kconfig-frontends genromfs
 
       - name: Install ESP-IDF
         run: |
@@ -53,7 +58,7 @@ jobs:
           cargo install espup
           espup install
 
-      - name: Build firmware
+      - name: Build NuttX firmware
         run: |
           source ~/esp/esp-idf/export.sh
           source ~/export-esp.sh

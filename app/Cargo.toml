@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["staticlib"]
+# staticlib for NuttX, rlib for native binary
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "rustcam"
+path = "src/bin/rustcam.rs"
 
 [profile.dev]
 panic = "abort"
@@ -19,5 +24,7 @@ debug = false
 overflow-checks = false
 debug-assertions = false
 
-# Dependencies - std is built from source via -Zbuild-std
 [dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
