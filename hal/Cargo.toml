@@ -1,0 +1,12 @@
+[package]
+name = "hal"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["platform-linux"]
+platform-linux = ["libc"]
+platform-nuttx = []
+
+[dependencies]
+libc = { version = "0.2", optional = true }

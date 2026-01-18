@@ -11,8 +11,8 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 default = ["platform-linux"]
-platform-linux = ["libc"]
-platform-nuttx = []
+platform-linux = ["hal/platform-linux"]
+platform-nuttx = ["hal/platform-nuttx"]
 
 [dependencies]
-libc = { version = "0.2", optional = true }
+hal = { path = "../../hal", default-features = false }

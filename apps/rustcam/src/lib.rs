@@ -15,8 +15,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-// Hardware Abstraction Layer
-mod hal;
+// Hardware Abstraction Layer (shared crate)
 use hal::{get_heap_stats, get_heap_used};
 
 // ============================================================================
