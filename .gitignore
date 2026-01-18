@@ -1,2 +1,7 @@
 /target
 Cargo.lock
+
+# NuttX build artifacts
+platform/nuttx/.built
+platform/nuttx/.depend
+platform/nuttx/Make.dep

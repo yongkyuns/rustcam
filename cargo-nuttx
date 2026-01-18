@@ -1,0 +1,84 @@
+#!/bin/bash
+# Custom cargo subcommand: cargo nuttx <app>
+#
+# Builds a Rust app for NuttX, configures and builds firmware.
+#
+# Usage:
+#   cargo nuttx rustcam
+#   cargo nuttx hello
+
+set -e
+
+# Find workspace root (where Cargo.toml with [workspace] is)
+find_workspace_root() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/Cargo.toml" ] && grep -q '^\[workspace\]' "$dir/Cargo.toml" 2>/dev/null; then
+            echo "$dir"
+            return
+        fi
+        dir="$(dirname "$dir")"
+    done
+    echo "$PWD"
+}
+
+WORKSPACE_ROOT="$(find_workspace_root)"
+NUTTX_DIR="$WORKSPACE_ROOT/external/nuttx"
+PLATFORM_DIR="$WORKSPACE_ROOT/platform/nuttx"
+
+# Parse arguments - skip "nuttx" if present (cargo passes subcommand name)
+APP=""
+for arg in "$@"; do
+    case "$arg" in
+        nuttx) ;; # skip
+        -*) ;; # skip flags for now
+        *) APP="$arg" ;;
+    esac
+done
+
+if [ -z "$APP" ]; then
+    echo "Usage: cargo nuttx <app>"
+    echo ""
+    echo "Apps: $(ls -1 "$WORKSPACE_ROOT/apps/" 2>/dev/null | tr '\n' ' ')"
+    exit 1
+fi
+
+echo "==> Building $APP for NuttX..."
+
+# Build the Rust library
+cd "$WORKSPACE_ROOT"
+cargo build --lib --release -p "$APP" \
+    --no-default-features --features platform-nuttx \
+    --target "$PLATFORM_DIR/nuttx.json" \
+    -Zbuild-std=std,panic_abort \
+    -Zbuild-std-features=panic_immediate_abort
+
+# Check if NuttX is configured
+if [ ! -f "$NUTTX_DIR/.config" ]; then
+    echo ""
+    echo "Rust library built: target/nuttx/release/lib$APP.a"
+    echo ""
+    echo "NuttX not configured. Run './build.sh config $APP' first, then './build.sh nuttx $APP'"
+    exit 0
+fi
+
+# Update app name in NuttX config
+echo "Updating NuttX config for $APP..."
+sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_NAME=.*/CONFIG_EXAMPLES_RUSTAPP_NAME=\"$APP\"/" "$NUTTX_DIR/.config"
+sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$APP\"/" "$NUTTX_DIR/.config"
+
+# Force rebuild of builtin list (contains entry point references)
+rm -f "$NUTTX_DIR/../nuttx-apps/builtin/builtin_list.c" 2>/dev/null || true
+make -C "$NUTTX_DIR" olddefconfig
+
+# Source ESP environment if available
+if [ -f ~/export-esp.sh ]; then
+    source ~/export-esp.sh
+fi
+
+# Build NuttX firmware
+echo "Building NuttX firmware..."
+make -C "$NUTTX_DIR" -j$(nproc)
+
+echo ""
+echo "Output: $NUTTX_DIR/nuttx.bin"
