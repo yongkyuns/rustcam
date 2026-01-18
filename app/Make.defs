@@ -21,5 +21,5 @@
 ifneq ($(CONFIG_EXAMPLES_RUSTCAM),)
 CONFIGURED_APPS += $(APPDIR)/examples/rustcam
 # Custom Xtensa target for ESP32-S3 (not supported by RUST_GET_BINDIR)
-EXTRA_LIBS += $(APPDIR)/examples/rustcam/target/xtensa-esp32s3-nuttx-elf/release/librustcam.a
+EXTRA_LIBS += $(APPDIR)/examples/rustcam/target/nuttx/release/librustcam.a
 endif

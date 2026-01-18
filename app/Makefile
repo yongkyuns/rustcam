@@ -28,8 +28,8 @@ STACKSIZE = $(CONFIG_EXAMPLES_RUSTCAM_STACKSIZE)
 MODULE    = $(CONFIG_EXAMPLES_RUSTCAM)
 
 # Custom target spec for ESP32-S3 on NuttX
-RUST_TARGET_SPEC = $(APPDIR)/examples/rustcam/xtensa-esp32s3-nuttx-elf.json
-RUST_TARGET_NAME = xtensa-esp32s3-nuttx-elf
+RUST_TARGET_SPEC = $(APPDIR)/examples/rustcam/nuttx.json
+RUST_TARGET_NAME = nuttx
 
 context::
 	@echo "Building Rust code for ESP32-S3 NuttX..."
