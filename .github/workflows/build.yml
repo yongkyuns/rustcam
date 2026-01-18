@@ -54,23 +54,17 @@ jobs:
           cd esp-idf
           ./install.sh esp32s3
 
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Install espup
-        run: |
-          source "$HOME/.cargo/env"
-          echo "PATH=$PATH"
-          which cargo
-          cargo --version
-          cargo install espup
-          espup install --log-level debug
+      - name: Setup Rust Xtensa toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build NuttX firmware (rustcam)
         run: |
           source ~/esp/esp-idf/export.sh
-          source ~/export-esp.sh
           export PATH="$GITHUB_WORKSPACE:$PATH"
           cargo nuttx rustcam
