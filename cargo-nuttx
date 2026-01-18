@@ -138,8 +138,8 @@ else
     sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$APP\"/" "$NUTTX_DIR/.config"
 fi
 
-# Force rebuild of builtin list (contains entry point references)
-rm -f "$APPS_DIR/builtin/builtin_list.c" 2>/dev/null || true
+# Force rebuild of builtin headers (contains entry point references)
+rm -f "$APPS_DIR/builtin/builtin_list.h" "$APPS_DIR/builtin/builtin_proto.h" 2>/dev/null || true
 make -C "$NUTTX_DIR" olddefconfig
 
 # Source ESP environment if available
