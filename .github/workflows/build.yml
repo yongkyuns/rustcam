@@ -50,7 +50,15 @@ jobs:
             dfu-util libusb-1.0-0 \
             kconfig-frontends genromfs
 
+      - name: Cache ESP-IDF
+        uses: actions/cache@v4
+        id: cache-esp-idf
+        with:
+          path: ~/esp
+          key: esp-idf-v5.4-esp32s3
+
       - name: Install ESP-IDF
+        if: steps.cache-esp-idf.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/esp
           cd ~/esp
