@@ -7,9 +7,7 @@ edition = "2021"
 # staticlib for NuttX, rlib for native binary
 crate-type = ["staticlib", "rlib"]
 
-[[bin]]
-name = "rustcam"
-path = "src/bin/rustcam.rs"
+# Binary auto-detected from src/main.rs (Linux only, NuttX uses --lib)
 
 [features]
 default = ["platform-linux"]
