@@ -61,8 +61,10 @@ jobs:
 
       - name: Install espup
         run: |
+          echo "PATH=$PATH"
+          which cargo
           cargo install espup
-          espup install
+          espup install --log-level debug
 
       - name: Build NuttX firmware (rustcam)
         run: |
