@@ -21,7 +21,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build ${{ matrix.app }}
-        run: cargo build -p ${{ matrix.app }}
+        run: |
+          cargo --version
+          rustc --version
+          cargo build -p ${{ matrix.app }} --verbose
 
 
   # NuttX ESP32-S3 firmware build

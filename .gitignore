@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 # NuttX build artifacts
 platform/nuttx/.built
