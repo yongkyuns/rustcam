@@ -21,7 +21,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build ${{ matrix.app }}
-        run: cargo linux ${{ matrix.app }}
+        run: cargo build -p ${{ matrix.app }}
 
 
   # NuttX ESP32-S3 firmware build
@@ -55,7 +55,10 @@ jobs:
       - name: Install Rust esp toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source ~/.cargo/env
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install espup
+        run: |
           cargo install espup
           espup install
 
@@ -63,4 +66,5 @@ jobs:
         run: |
           source ~/esp/esp-idf/export.sh
           source ~/export-esp.sh
+          export PATH="$GITHUB_WORKSPACE:$PATH"
           cargo nuttx rustcam
