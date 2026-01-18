@@ -1,39 +1,53 @@
 #!/bin/bash
-# ESP32-S3 Camera Project Build Script
+# Multi-app, multi-platform build script
+#
+# Usage:
+#   ./build.sh <platform> <app>
+#   ./build.sh <command>
+#
+# Examples:
+#   ./build.sh linux rustcam
+#   ./build.sh linux hello
+#   ./build.sh nuttx rustcam
+#   ./build.sh nuttx hello
+#   ./build.sh setup
+#   ./build.sh config
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NUTTX_DIR="$SCRIPT_DIR/external/nuttx"
 APPS_DIR="$SCRIPT_DIR/external/nuttx-apps"
-APP_NAME="rustcam"
 
 # Board configuration
 BOARD="esp32s3-devkit"
 CONFIG="nsh"
 
 usage() {
-    echo "Usage: $0 <command>"
+    echo "Usage: ./build.sh <platform> <app>"
+    echo "       ./build.sh <command>"
+    echo ""
+    echo "Build:"
+    echo "  linux <app>  - Build app for Linux"
+    echo "  nuttx <app>  - Build app for NuttX (configures and builds firmware)"
+    echo ""
+    echo "Apps: $(ls -1 apps/ 2>/dev/null | tr '\n' ' ')"
     echo ""
     echo "Commands:"
-    echo "  setup     - Link app into nuttx-apps and initialize"
-    echo "  config    - Configure NuttX for ESP32-S3"
-    echo "  menuconfig- Run menuconfig for manual configuration"
-    echo "  build     - Build the firmware"
-    echo "  clean     - Clean build artifacts"
-    echo "  distclean - Full clean including configuration"
-    echo "  all       - Setup, config, and build"
-    echo ""
+    echo "  setup       - Initialize project (symlinks, submodules)"
+    echo "  config      - Configure NuttX for ESP32-S3"
+    echo "  menuconfig  - Run menuconfig"
+    echo "  clean       - Clean build artifacts"
 }
 
 setup() {
     echo "==> Setting up project..."
 
-    # Create symlink for the app in nuttx-apps
-    APP_LINK="$APPS_DIR/examples/$APP_NAME"
+    # Create symlink for NuttX platform in nuttx-apps
+    APP_LINK="$APPS_DIR/examples/rustapp"
     if [ ! -L "$APP_LINK" ]; then
-        echo "Creating symlink: $APP_LINK -> $SCRIPT_DIR/app"
-        ln -sf "$SCRIPT_DIR/app" "$APP_LINK"
+        echo "Creating symlink: $APP_LINK -> $SCRIPT_DIR/platform/nuttx"
+        ln -sf "$SCRIPT_DIR/platform/nuttx" "$APP_LINK"
     else
         echo "Symlink already exists: $APP_LINK"
     fi
@@ -46,7 +60,8 @@ setup() {
 }
 
 config() {
-    echo "==> Configuring NuttX for ESP32-S3..."
+    local app_name="${1:-rustcam}"
+    echo "==> Configuring NuttX for ESP32-S3 with app: $app_name..."
 
     cd "$NUTTX_DIR"
 
@@ -54,7 +69,6 @@ config() {
     make distclean 2>/dev/null || true
 
     # Configure for ESP32-S3 devkit
-    # -l creates symlink to apps, -a specifies apps directory path (relative to nuttx dir)
     ./tools/configure.sh -l "$BOARD:$CONFIG"
 
     # Enable required options for Rust std
@@ -64,90 +78,93 @@ config() {
     kconfig-tweak --set-val CONFIG_TLS_NCLEANUP 4
     kconfig-tweak --enable CONFIG_DEV_URANDOM
 
-    # Enable the rustcam app
-    kconfig-tweak --enable CONFIG_EXAMPLES_RUSTCAM
+    # Enable the Rust app with specified package name
+    kconfig-tweak --enable CONFIG_EXAMPLES_RUSTAPP
+    kconfig-tweak --set-str CONFIG_EXAMPLES_RUSTAPP_NAME "$app_name"
+    kconfig-tweak --set-str CONFIG_EXAMPLES_RUSTAPP_PROGNAME "$app_name"
 
     # Refresh config
     make olddefconfig
 
-    echo "==> Configuration complete"
-    echo "Run '$0 menuconfig' to customize further"
+    echo "==> Configuration complete for $app_name"
 }
 
-menuconfig() {
-    cd "$NUTTX_DIR"
-    make menuconfig
+build_linux() {
+    local app="$1"
+    echo "==> Building $app for Linux..."
+    cargo build -p "$app"
+    echo ""
+    echo "Output: target/debug/$app"
 }
 
-build() {
-    echo "==> Building firmware..."
+build_nuttx() {
+    local app="$1"
+    echo "==> Building $app for NuttX..."
+
+    # Build the Rust library
+    cargo nuttx -p "$app"
+
+    # Check if NuttX is configured
+    if [ ! -f "$NUTTX_DIR/.config" ]; then
+        echo "NuttX not configured. Running config..."
+        config "$app"
+    else
+        # Update app name in existing config
+        echo "Updating NuttX config for $app..."
+        sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_NAME=.*/CONFIG_EXAMPLES_RUSTAPP_NAME=\"$app\"/" "$NUTTX_DIR/.config"
+        sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$app\"/" "$NUTTX_DIR/.config"
+    fi
 
     # Source ESP environment if available
     if [ -f ~/export-esp.sh ]; then
         source ~/export-esp.sh
     fi
 
-    cd "$NUTTX_DIR"
-    make -j$(nproc)
+    # Build NuttX firmware
+    echo "Building NuttX firmware..."
+    make -C "$NUTTX_DIR" -j$(nproc)
 
-    echo "==> Build complete"
-    echo "Firmware: $NUTTX_DIR/nuttx.bin"
+    echo ""
+    echo "Output: $NUTTX_DIR/nuttx.bin"
 }
 
 clean() {
     echo "==> Cleaning build artifacts..."
-    cd "$NUTTX_DIR"
-    make clean
-
-    # Clean Rust target directory
-    if [ -d "$SCRIPT_DIR/app/target" ]; then
-        rm -rf "$SCRIPT_DIR/app/target"
-    fi
-
+    cargo clean
+    make -C "$NUTTX_DIR" clean 2>/dev/null || true
     echo "==> Clean complete"
-}
-
-distclean() {
-    echo "==> Full clean..."
-    cd "$NUTTX_DIR"
-    make distclean 2>/dev/null || true
-
-    # Clean Rust target directory
-    if [ -d "$SCRIPT_DIR/app/target" ]; then
-        rm -rf "$SCRIPT_DIR/app/target"
-    fi
-
-    echo "==> Distclean complete"
-}
-
-all() {
-    setup
-    config
-    build
 }
 
 # Main
 case "${1:-}" in
+    linux)
+        if [ -z "$2" ]; then
+            echo "Error: specify app name"
+            echo "Usage: ./build.sh linux <app>"
+            exit 1
+        fi
+        build_linux "$2"
+        ;;
+    nuttx)
+        if [ -z "$2" ]; then
+            echo "Error: specify app name"
+            echo "Usage: ./build.sh nuttx <app>"
+            exit 1
+        fi
+        build_nuttx "$2"
+        ;;
     setup)
         setup
         ;;
     config)
-        config
+        config "${2:-rustcam}"
         ;;
     menuconfig)
-        menuconfig
-        ;;
-    build)
-        build
+        cd "$NUTTX_DIR"
+        make menuconfig
         ;;
     clean)
         clean
-        ;;
-    distclean)
-        distclean
-        ;;
-    all)
-        all
         ;;
     *)
         usage
