@@ -17,16 +17,23 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Debug environment
-        run: |
-          pwd
-          ls -la
-          cat Cargo.toml
-          cargo --version
-          rustc --version
+      - name: Check pwd
+        run: pwd
+
+      - name: List files
+        run: ls -la
+
+      - name: Show Cargo.toml
+        run: cat Cargo.toml
+
+      - name: Cargo version
+        run: cargo --version
+
+      - name: Rustc version
+        run: rustc --version
 
       - name: Build hello
-        run: cargo check -p hello 2>&1 || (echo "Build failed with exit code $?" && exit 1)
+        run: cargo check -p hello
 
       - name: Build rustcam
-        run: cargo check -p rustcam 2>&1 || (echo "Build failed with exit code $?" && exit 1)
+        run: cargo check -p rustcam
