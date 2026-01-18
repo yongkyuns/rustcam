@@ -21,7 +21,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build ${{ matrix.app }}
-        run: ./build.sh linux ${{ matrix.app }}
+        run: cargo build -p ${{ matrix.app }}
 
       - name: Run ${{ matrix.app }}
         run: |
@@ -63,12 +63,8 @@ jobs:
           cargo install espup
           espup install
 
-      - name: Setup project
-        run: ./build.sh setup
-
       - name: Build NuttX firmware (rustcam)
         run: |
           source ~/esp/esp-idf/export.sh
           source ~/export-esp.sh
-          ./build.sh config rustcam
-          ./build.sh nuttx rustcam
+          cargo nuttx rustcam

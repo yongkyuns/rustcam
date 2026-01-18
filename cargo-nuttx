@@ -2,10 +2,16 @@
 # Custom cargo subcommand: cargo nuttx <app>
 #
 # Builds a Rust app for NuttX, configures and builds firmware.
+# Automatically handles setup and configuration on first run.
 #
 # Usage:
 #   cargo nuttx rustcam
 #   cargo nuttx hello
+#
+# Commands:
+#   cargo nuttx <app>        Build app for NuttX
+#   cargo nuttx menuconfig   Run NuttX menuconfig
+#   cargo nuttx clean        Clean NuttX build artifacts
 
 set -e
 
@@ -24,24 +30,93 @@ find_workspace_root() {
 
 WORKSPACE_ROOT="$(find_workspace_root)"
 NUTTX_DIR="$WORKSPACE_ROOT/external/nuttx"
+APPS_DIR="$WORKSPACE_ROOT/external/nuttx-apps"
 PLATFORM_DIR="$WORKSPACE_ROOT/platform/nuttx"
+
+# Board configuration
+BOARD="esp32s3-devkit"
+CONFIG="nsh"
 
 # Parse arguments - skip "nuttx" if present (cargo passes subcommand name)
 APP=""
+CMD=""
 for arg in "$@"; do
     case "$arg" in
         nuttx) ;; # skip
+        menuconfig|clean) CMD="$arg" ;;
         -*) ;; # skip flags for now
         *) APP="$arg" ;;
     esac
 done
 
+# Handle special commands
+case "$CMD" in
+    menuconfig)
+        cd "$NUTTX_DIR"
+        make menuconfig
+        exit 0
+        ;;
+    clean)
+        echo "==> Cleaning build artifacts..."
+        cd "$WORKSPACE_ROOT"
+        cargo clean
+        make -C "$NUTTX_DIR" clean 2>/dev/null || true
+        echo "==> Clean complete"
+        exit 0
+        ;;
+esac
+
 if [ -z "$APP" ]; then
     echo "Usage: cargo nuttx <app>"
+    echo "       cargo nuttx menuconfig"
+    echo "       cargo nuttx clean"
     echo ""
     echo "Apps: $(ls -1 "$WORKSPACE_ROOT/apps/" 2>/dev/null | tr '\n' ' ')"
     exit 1
 fi
+
+# Setup: Create symlink if missing
+setup() {
+    local app_link="$APPS_DIR/examples/rustapp"
+    if [ ! -L "$app_link" ]; then
+        echo "==> Setting up project symlink..."
+        ln -sf "$WORKSPACE_ROOT/platform/nuttx" "$app_link"
+    fi
+}
+
+# Configure NuttX if not configured
+configure() {
+    local app_name="$1"
+    echo "==> Configuring NuttX for ESP32-S3..."
+
+    cd "$NUTTX_DIR"
+
+    # Clean any existing config
+    make distclean 2>/dev/null || true
+
+    # Configure for ESP32-S3 devkit
+    ./tools/configure.sh -l "$BOARD:$CONFIG"
+
+    # Enable required options for Rust std
+    kconfig-tweak --enable CONFIG_SYSTEM_TIME64
+    kconfig-tweak --enable CONFIG_FS_LARGEFILE
+    kconfig-tweak --set-val CONFIG_TLS_NELEM 8
+    kconfig-tweak --set-val CONFIG_TLS_NCLEANUP 4
+    kconfig-tweak --enable CONFIG_DEV_URANDOM
+
+    # Enable the Rust app with specified package name
+    kconfig-tweak --enable CONFIG_EXAMPLES_RUSTAPP
+    kconfig-tweak --set-str CONFIG_EXAMPLES_RUSTAPP_NAME "$app_name"
+    kconfig-tweak --set-str CONFIG_EXAMPLES_RUSTAPP_PROGNAME "$app_name"
+
+    # Refresh config
+    make olddefconfig
+
+    echo "==> Configuration complete"
+}
+
+# Ensure setup is done
+setup
 
 echo "==> Building $APP for NuttX..."
 
@@ -53,22 +128,18 @@ cargo build --lib --release -p "$APP" \
     -Zbuild-std=std,panic_abort \
     -Zbuild-std-features=panic_immediate_abort
 
-# Check if NuttX is configured
+# Configure NuttX if not yet configured
 if [ ! -f "$NUTTX_DIR/.config" ]; then
-    echo ""
-    echo "Rust library built: target/nuttx/release/lib$APP.a"
-    echo ""
-    echo "NuttX not configured. Run './build.sh config $APP' first, then './build.sh nuttx $APP'"
-    exit 0
+    configure "$APP"
+else
+    # Update app name in existing config
+    echo "Updating NuttX config for $APP..."
+    sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_NAME=.*/CONFIG_EXAMPLES_RUSTAPP_NAME=\"$APP\"/" "$NUTTX_DIR/.config"
+    sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$APP\"/" "$NUTTX_DIR/.config"
 fi
 
-# Update app name in NuttX config
-echo "Updating NuttX config for $APP..."
-sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_NAME=.*/CONFIG_EXAMPLES_RUSTAPP_NAME=\"$APP\"/" "$NUTTX_DIR/.config"
-sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$APP\"/" "$NUTTX_DIR/.config"
-
 # Force rebuild of builtin list (contains entry point references)
-rm -f "$NUTTX_DIR/../nuttx-apps/builtin/builtin_list.c" 2>/dev/null || true
+rm -f "$APPS_DIR/builtin/builtin_list.c" 2>/dev/null || true
 make -C "$NUTTX_DIR" olddefconfig
 
 # Source ESP environment if available
