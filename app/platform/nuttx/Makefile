@@ -1,5 +1,5 @@
 ############################################################################
-# rustcam/app/Make.defs
+# rustcam/app/Makefile
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
@@ -18,8 +18,30 @@
 #
 ############################################################################
 
-ifneq ($(CONFIG_EXAMPLES_RUSTCAM),)
-CONFIGURED_APPS += $(APPDIR)/examples/rustcam
-# Custom Xtensa target for ESP32-S3 (not supported by RUST_GET_BINDIR)
-EXTRA_LIBS += $(APPDIR)/examples/rustcam/target/nuttx/release/librustcam.a
-endif
+include $(APPDIR)/Make.defs
+
+# Rust Camera built-in application info
+
+PROGNAME  = $(CONFIG_EXAMPLES_RUSTCAM_PROGNAME)
+PRIORITY  = $(CONFIG_EXAMPLES_RUSTCAM_PRIORITY)
+STACKSIZE = $(CONFIG_EXAMPLES_RUSTCAM_STACKSIZE)
+MODULE    = $(CONFIG_EXAMPLES_RUSTCAM)
+
+# Paths relative to this Makefile location (platform/nuttx/)
+RUSTCAM_ROOT = $(CURDIR)/../..
+RUST_TARGET_SPEC = $(CURDIR)/nuttx.json
+RUST_TARGET_NAME = nuttx
+
+context::
+	@echo "Building Rust code for ESP32-S3 NuttX..."
+	NUTTX_INCLUDE_DIR=$(TOPDIR)/include:$(TOPDIR)/include/arch \
+	cargo build --lib --release --no-default-features --features platform-nuttx \
+		-Zbuild-std=std,panic_abort \
+		-Zbuild-std-features=panic_immediate_abort \
+		--manifest-path $(RUSTCAM_ROOT)/Cargo.toml \
+		--target $(RUST_TARGET_SPEC)
+
+clean::
+	cargo clean --manifest-path $(RUSTCAM_ROOT)/Cargo.toml
+
+include $(APPDIR)/Application.mk
