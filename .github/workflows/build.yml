@@ -54,13 +54,15 @@ jobs:
           cd esp-idf
           ./install.sh esp32s3
 
-      - name: Install Rust and ESP toolchain
+      - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source "$HOME/.cargo/env"
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install espup
+        run: |
           cargo install espup
           espup install
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build NuttX firmware (rustcam)
         run: |
