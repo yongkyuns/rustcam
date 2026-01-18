@@ -11,6 +11,7 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         app: [rustcam, hello]
     steps:
@@ -22,9 +23,13 @@ jobs:
 
       - name: Build ${{ matrix.app }}
         run: |
+          set -x
           cargo --version
           rustc --version
-          cargo build --bin ${{ matrix.app }} --verbose 2>&1
+          which cargo
+          which rustc
+          ls -la
+          cargo check -p ${{ matrix.app }} --verbose
 
 
   # NuttX ESP32-S3 firmware build
@@ -55,15 +60,13 @@ jobs:
           cd esp-idf
           ./install.sh esp32s3
 
-      - name: Install Rust esp toolchain
+      - name: Install Rust and ESP toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Install espup
-        run: |
+          source "$HOME/.cargo/env"
           cargo install espup
           espup install
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build NuttX firmware (rustcam)
         run: |
