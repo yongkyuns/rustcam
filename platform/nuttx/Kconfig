@@ -1,0 +1,37 @@
+#
+# Generic Rust application configuration for NuttX
+#
+
+config EXAMPLES_RUSTAPP
+	tristate "Rust Application"
+	default n
+	---help---
+		Build a Rust application from the workspace.
+
+if EXAMPLES_RUSTAPP
+
+config EXAMPLES_RUSTAPP_NAME
+	string "Rust package name"
+	default "rustcam"
+	---help---
+		Name of the Rust package to build (must match Cargo.toml package name).
+
+config EXAMPLES_RUSTAPP_PROGNAME
+	string "Program name"
+	default "rustcam"
+	---help---
+		This is the name of the program that will be used when the
+		program is installed.
+
+config EXAMPLES_RUSTAPP_PRIORITY
+	int "Task priority"
+	default 100
+
+config EXAMPLES_RUSTAPP_STACKSIZE
+	int "Stack size"
+	default 8192
+	---help---
+		Stack size for the Rust app. Needs to be larger than
+		default due to thread spawning and std library usage.
+
+endif

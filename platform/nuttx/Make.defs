@@ -1,0 +1,11 @@
+############################################################################
+# Generic Rust application Make.defs for NuttX
+############################################################################
+
+ifneq ($(CONFIG_EXAMPLES_RUSTAPP),)
+CONFIGURED_APPS += $(APPDIR)/examples/rustapp
+
+# Link the Rust library (name matches package name from Kconfig)
+# Target dir is at workspace root, 2 levels up from platform/nuttx/
+EXTRA_LIBS += $(APPDIR)/examples/rustapp/../../target/nuttx/release/lib$(CONFIG_EXAMPLES_RUSTAPP_NAME).a
+endif
