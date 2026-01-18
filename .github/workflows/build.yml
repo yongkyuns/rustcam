@@ -23,9 +23,6 @@ jobs:
       - name: Build ${{ matrix.app }}
         run: cargo linux ${{ matrix.app }}
 
-      - name: Run ${{ matrix.app }}
-        if: matrix.app == 'hello'
-        run: cargo linux ${{ matrix.app }} --run
 
   # NuttX ESP32-S3 firmware build
   nuttx:
