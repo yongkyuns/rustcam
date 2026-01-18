@@ -101,31 +101,8 @@ build_nuttx() {
     local app="$1"
     echo "==> Building $app for NuttX..."
 
-    # Build the Rust library
-    cargo nuttx -p "$app"
-
-    # Check if NuttX is configured
-    if [ ! -f "$NUTTX_DIR/.config" ]; then
-        echo "NuttX not configured. Running config..."
-        config "$app"
-    else
-        # Update app name in existing config
-        echo "Updating NuttX config for $app..."
-        sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_NAME=.*/CONFIG_EXAMPLES_RUSTAPP_NAME=\"$app\"/" "$NUTTX_DIR/.config"
-        sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$app\"/" "$NUTTX_DIR/.config"
-    fi
-
-    # Source ESP environment if available
-    if [ -f ~/export-esp.sh ]; then
-        source ~/export-esp.sh
-    fi
-
-    # Build NuttX firmware
-    echo "Building NuttX firmware..."
-    make -C "$NUTTX_DIR" -j$(nproc)
-
-    echo ""
-    echo "Output: $NUTTX_DIR/nuttx.bin"
+    # Use cargo-nuttx which handles everything
+    cargo nuttx "$app"
 }
 
 clean() {

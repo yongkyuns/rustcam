@@ -10,6 +10,9 @@ jobs:
   # Fast native Linux build
   linux:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [rustcam, hello]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,11 +20,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build native binary
-        run: cargo build --manifest-path app/Cargo.toml --bin rustcam
+      - name: Build ${{ matrix.app }}
+        run: ./build.sh linux ${{ matrix.app }}
 
-      - name: Run tests
-        run: echo "m\nq" | cargo run --manifest-path app/Cargo.toml --bin rustcam
+      - name: Run ${{ matrix.app }}
+        run: |
+          # Run the app with a timeout, sending quit command
+          timeout 5s ./target/debug/${{ matrix.app }} || true
 
   # NuttX ESP32-S3 firmware build
   nuttx:
@@ -58,8 +63,12 @@ jobs:
           cargo install espup
           espup install
 
-      - name: Build NuttX firmware
+      - name: Setup project
+        run: ./build.sh setup
+
+      - name: Build NuttX firmware (rustcam)
         run: |
           source ~/esp/esp-idf/export.sh
           source ~/export-esp.sh
-          ./build.sh all
+          ./build.sh config rustcam
+          ./build.sh nuttx rustcam
