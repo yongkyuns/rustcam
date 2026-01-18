@@ -61,8 +61,10 @@ jobs:
 
       - name: Install espup
         run: |
+          source "$HOME/.cargo/env"
           echo "PATH=$PATH"
           which cargo
+          cargo --version
           cargo install espup
           espup install --log-level debug
 
