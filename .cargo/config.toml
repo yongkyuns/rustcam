@@ -1,9 +1,10 @@
 [alias]
+# Build for NuttX: cargo nuttx -p <app>
 nuttx = """build --lib --release \
     --no-default-features --features platform-nuttx \
-    --target platform/nuttx/nuttx.json \
+    --target .cargo/nuttx.json \
     -Zbuild-std=std,panic_abort \
     -Zbuild-std-features=panic_immediate_abort"""
 
 [env]
-NUTTX_INCLUDE_DIR = { value = "../../external/nuttx/include", relative = true }
+NUTTX_INCLUDE_DIR = { value = "external/nuttx/include", relative = true }

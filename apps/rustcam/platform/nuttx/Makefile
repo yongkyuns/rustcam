@@ -27,21 +27,21 @@ PRIORITY  = $(CONFIG_EXAMPLES_RUSTCAM_PRIORITY)
 STACKSIZE = $(CONFIG_EXAMPLES_RUSTCAM_STACKSIZE)
 MODULE    = $(CONFIG_EXAMPLES_RUSTCAM)
 
-# Paths relative to this Makefile location (platform/nuttx/)
-RUSTCAM_ROOT = $(CURDIR)/../..
-RUST_TARGET_SPEC = $(CURDIR)/nuttx.json
-RUST_TARGET_NAME = nuttx
+# Paths relative to this Makefile location (apps/rustcam/platform/nuttx/)
+WORKSPACE_ROOT = $(CURDIR)/../../../..
+RUST_TARGET_SPEC = $(WORKSPACE_ROOT)/.cargo/nuttx.json
 
 context::
 	@echo "Building Rust code for ESP32-S3 NuttX..."
 	NUTTX_INCLUDE_DIR=$(TOPDIR)/include:$(TOPDIR)/include/arch \
-	cargo build --lib --release --no-default-features --features platform-nuttx \
+	cargo build --lib --release -p rustcam \
+		--no-default-features --features platform-nuttx \
 		-Zbuild-std=std,panic_abort \
 		-Zbuild-std-features=panic_immediate_abort \
-		--manifest-path $(RUSTCAM_ROOT)/Cargo.toml \
+		--manifest-path $(WORKSPACE_ROOT)/Cargo.toml \
 		--target $(RUST_TARGET_SPEC)
 
 clean::
-	cargo clean --manifest-path $(RUSTCAM_ROOT)/Cargo.toml
+	cargo clean --manifest-path $(WORKSPACE_ROOT)/Cargo.toml -p rustcam
 
 include $(APPDIR)/Application.mk
