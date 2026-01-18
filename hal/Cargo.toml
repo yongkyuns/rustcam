@@ -5,8 +5,16 @@ edition.workspace = true
 
 [features]
 default = ["platform-linux"]
+
+# Platform selection (set by build command, propagated from app)
 platform-linux = ["libc"]
 platform-nuttx = []
+
+# HAL modules (apps select which ones they need)
+heap = []
+# led = []      # Future: LED control
+# motor = []    # Future: Motor control
+# gpio = []     # Future: GPIO access
 
 [dependencies]
 libc = { version = "0.2", optional = true }

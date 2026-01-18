@@ -11,8 +11,10 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 default = ["platform-linux"]
+# Platform features - propagate to HAL
 platform-linux = ["hal/platform-linux"]
 platform-nuttx = ["hal/platform-nuttx"]
 
 [dependencies]
-hal = { path = "../../hal", default-features = false }
+# Specify which HAL modules this app uses (platform is set by features above)
+hal = { path = "../../hal", default-features = false, features = ["heap"] }
