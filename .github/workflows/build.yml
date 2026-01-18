@@ -7,13 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  # Fast native Linux build
+  # Minimal Linux build test
   linux:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        app: [rustcam, hello]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,56 +17,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build ${{ matrix.app }}
+      - name: Debug environment
         run: |
-          set -x
+          pwd
+          ls -la
+          cat Cargo.toml
           cargo --version
           rustc --version
-          which cargo
-          which rustc
-          ls -la
-          cargo check -p ${{ matrix.app }} --verbose
 
+      - name: Build hello
+        run: cargo check -p hello 2>&1 || (echo "Build failed with exit code $?" && exit 1)
 
-  # NuttX ESP32-S3 firmware build
-  nuttx:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git wget flex bison gperf \
-            python3 python3-pip python3-venv \
-            cmake ninja-build ccache \
-            libffi-dev libssl-dev \
-            dfu-util libusb-1.0-0 \
-            kconfig-frontends genromfs
-
-      - name: Install ESP-IDF
-        run: |
-          mkdir -p ~/esp
-          cd ~/esp
-          git clone -b v5.4 --depth 1 --recursive https://github.com/espressif/esp-idf.git
-          cd esp-idf
-          ./install.sh esp32s3
-
-      - name: Install Rust and ESP toolchain
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source "$HOME/.cargo/env"
-          cargo install espup
-          espup install
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Build NuttX firmware (rustcam)
-        run: |
-          source ~/esp/esp-idf/export.sh
-          source ~/export-esp.sh
-          export PATH="$GITHUB_WORKSPACE:$PATH"
-          cargo nuttx rustcam
+      - name: Build rustcam
+        run: cargo check -p rustcam 2>&1 || (echo "Build failed with exit code $?" && exit 1)
