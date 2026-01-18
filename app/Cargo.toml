@@ -11,6 +11,14 @@ crate-type = ["staticlib", "rlib"]
 name = "rustcam"
 path = "src/bin/rustcam.rs"
 
+[features]
+default = ["platform-linux"]
+platform-linux = ["libc"]
+platform-nuttx = []
+
+[dependencies]
+libc = { version = "0.2", optional = true }
+
 [profile.dev]
 panic = "abort"
 
@@ -23,8 +31,3 @@ strip = "symbols"
 debug = false
 overflow-checks = false
 debug-assertions = false
-
-[dependencies]
-
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"

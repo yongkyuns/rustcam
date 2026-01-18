@@ -2,6 +2,11 @@
 //!
 //! This example demonstrates Rust std features and measures their runtime
 //! memory usage. Portable across NuttX and native Linux/POSIX systems.
+//!
+//! Platform abstraction follows the godevice HAL pattern:
+//! - Interface defined in hal/mod.rs
+//! - Implementations in hal/<module>/<platform>.rs
+//! - Selection via Cargo features (platform-linux, platform-nuttx)
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
@@ -10,86 +15,9 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-// ============================================================================
-// Platform-specific heap introspection
-// ============================================================================
-
-#[cfg(target_os = "nuttx")]
-mod heap {
-    #[repr(C)]
-    #[derive(Debug, Clone, Copy)]
-    pub struct MallInfo {
-        pub arena: i32,
-        pub ordblks: i32,
-        pub mxordblk: i32,
-        pub uordblks: i32,
-        pub fordblks: i32,
-    }
-
-    extern "C" {
-        fn mallinfo() -> MallInfo;
-    }
-
-    pub fn get_heap_used() -> i32 {
-        unsafe { mallinfo().fordblks }
-    }
-
-    pub fn get_heap_stats() -> Option<MallInfo> {
-        Some(unsafe { mallinfo() })
-    }
-}
-
-#[cfg(target_os = "linux")]
-mod heap {
-    #[derive(Debug, Clone, Copy)]
-    pub struct MallInfo {
-        pub arena: i32,
-        pub ordblks: i32,
-        pub mxordblk: i32,
-        pub uordblks: i32,
-        pub fordblks: i32,
-    }
-
-    pub fn get_heap_used() -> i32 {
-        // Linux mallinfo fields: arena, ordblks, smblks, hblks, hblkhd,
-        // usmblks, fsmblks, uordblks, fordblks, keepcost
-        let info = unsafe { libc::mallinfo() };
-        info.uordblks
-    }
-
-    pub fn get_heap_stats() -> Option<MallInfo> {
-        let info = unsafe { libc::mallinfo() };
-        Some(MallInfo {
-            arena: info.arena,
-            ordblks: info.ordblks,
-            mxordblk: 0, // Not directly available in Linux mallinfo
-            uordblks: info.uordblks,
-            fordblks: info.fordblks,
-        })
-    }
-}
-
-#[cfg(not(any(target_os = "nuttx", target_os = "linux")))]
-mod heap {
-    #[derive(Debug, Clone, Copy)]
-    pub struct MallInfo {
-        pub arena: i32,
-        pub ordblks: i32,
-        pub mxordblk: i32,
-        pub uordblks: i32,
-        pub fordblks: i32,
-    }
-
-    pub fn get_heap_used() -> i32 {
-        0 // Not available on this platform
-    }
-
-    pub fn get_heap_stats() -> Option<MallInfo> {
-        None
-    }
-}
-
-use heap::{get_heap_stats, get_heap_used};
+// Hardware Abstraction Layer
+mod hal;
+use hal::{get_heap_stats, get_heap_used};
 
 // ============================================================================
 // Common types
@@ -398,7 +326,7 @@ pub fn run() -> i32 {
 // ============================================================================
 
 /// NuttX entry point
-#[cfg(target_os = "nuttx")]
+#[cfg(feature = "platform-nuttx")]
 #[no_mangle]
 pub extern "C" fn rustcam_main(_argc: i32, _argv: *const *const u8) -> i32 {
     run()
