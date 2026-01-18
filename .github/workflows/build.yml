@@ -21,12 +21,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build ${{ matrix.app }}
-        run: cargo build -p ${{ matrix.app }}
+        run: cargo linux ${{ matrix.app }}
 
       - name: Run ${{ matrix.app }}
-        run: |
-          # Run the app with a timeout, sending quit command
-          timeout 5s ./target/debug/${{ matrix.app }} || true
+        run: timeout 5s cargo linux ${{ matrix.app }} --run || true
 
   # NuttX ESP32-S3 firmware build
   nuttx:

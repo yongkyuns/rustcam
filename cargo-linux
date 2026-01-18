@@ -1,0 +1,83 @@
+#!/bin/bash
+# Custom cargo subcommand: cargo linux <app>
+#
+# Builds a Rust app for Linux.
+#
+# Usage:
+#   cargo linux rustcam
+#   cargo linux hello
+#   cargo linux hello --release
+#
+# Commands:
+#   cargo linux <app>           Build app for Linux (debug)
+#   cargo linux <app> --release Build app for Linux (release)
+#   cargo linux <app> --run     Build and run app
+#   cargo linux clean           Clean build artifacts
+
+set -e
+
+# Find workspace root (where Cargo.toml with [workspace] is)
+find_workspace_root() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/Cargo.toml" ] && grep -q '^\[workspace\]' "$dir/Cargo.toml" 2>/dev/null; then
+            echo "$dir"
+            return
+        fi
+        dir="$(dirname "$dir")"
+    done
+    echo "$PWD"
+}
+
+WORKSPACE_ROOT="$(find_workspace_root)"
+
+# Parse arguments
+APP=""
+CMD=""
+RELEASE=""
+RUN=""
+for arg in "$@"; do
+    case "$arg" in
+        linux) ;; # skip (cargo passes subcommand name)
+        clean) CMD="clean" ;;
+        --release) RELEASE="--release" ;;
+        --run) RUN="1" ;;
+        -*) ;; # skip other flags
+        *) APP="$arg" ;;
+    esac
+done
+
+# Handle clean command
+if [ "$CMD" = "clean" ]; then
+    echo "==> Cleaning Linux build artifacts..."
+    cd "$WORKSPACE_ROOT"
+    cargo clean
+    echo "==> Clean complete"
+    exit 0
+fi
+
+if [ -z "$APP" ]; then
+    echo "Usage: cargo linux <app> [--release] [--run]"
+    echo "       cargo linux clean"
+    echo ""
+    echo "Apps: $(ls -1 "$WORKSPACE_ROOT/apps/" 2>/dev/null | tr '\n' ' ')"
+    exit 1
+fi
+
+cd "$WORKSPACE_ROOT"
+
+if [ -n "$RUN" ]; then
+    echo "==> Running $APP for Linux..."
+    cargo run -p "$APP" $RELEASE
+else
+    echo "==> Building $APP for Linux..."
+    cargo build -p "$APP" $RELEASE
+
+    if [ -n "$RELEASE" ]; then
+        echo ""
+        echo "Output: target/release/$APP"
+    else
+        echo ""
+        echo "Output: target/debug/$APP"
+    fi
+fi
