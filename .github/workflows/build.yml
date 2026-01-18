@@ -29,6 +29,10 @@ jobs:
   # NuttX ESP32-S3 firmware build
   nuttx:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [rustcam, hello]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,8 +67,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build NuttX firmware (rustcam)
+      - name: Build NuttX firmware (${{ matrix.app }})
         run: |
           source ~/esp/esp-idf/export.sh
           export PATH="$GITHUB_WORKSPACE:$PATH"
-          cargo nuttx rustcam
+          cargo nuttx ${{ matrix.app }}
