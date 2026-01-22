@@ -52,9 +52,11 @@ int rustcam_main(int argc, char *argv[])
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
 #include "host/ble_hs.h"
+#include "host/ble_gatt.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "os/os_mbuf.h"
 
 /* State */
 static volatile int g_ble_initialized = 0;
@@ -76,6 +78,26 @@ static char g_device_name[32] = "RustCam";
 /* Pending advertising request */
 static volatile int g_pending_adv = 0;
 
+/* GATT command buffer - stores last received command */
+static uint8_t g_gatt_command[64];
+static volatile uint8_t g_gatt_command_len = 0;
+
+/* GATT read response message */
+static const char *g_gatt_read_msg = "Hello from RustCam!";
+
+/* Custom GATT service UUIDs (matching unix.rs) */
+/* Service UUID: 0x1234 */
+/* Read characteristic UUID: 0x1235 */
+/* Write characteristic UUID: 0x1236 */
+
+static const ble_uuid16_t g_svc_uuid = BLE_UUID16_INIT(0x1234);
+static const ble_uuid16_t g_chr_read_uuid = BLE_UUID16_INIT(0x1235);
+static const ble_uuid16_t g_chr_write_uuid = BLE_UUID16_INIT(0x1236);
+
+/* Value handle for read characteristic (filled in at registration) */
+static uint16_t g_chr_read_handle;
+static uint16_t g_chr_write_handle;
+
 /* Forward declarations */
 static void ble_on_sync(void);
 static void ble_on_reset(int reason);
@@ -83,6 +105,187 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg);
 static void *ble_host_thread(void *arg);
 static void *ble_hci_sock_thread(void *arg);
 static void do_start_advertising(void);
+static int gatt_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+/****************************************************************************
+ * GATT Service Definition
+ * - Service UUID: 0x1234
+ * - Read characteristic (0x1235): Returns "Hello from RustCam!"
+ * - Write characteristic (0x1236): Receives commands
+ ****************************************************************************/
+
+static const struct ble_gatt_svc_def g_gatt_svcs[] = {
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &g_svc_uuid.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                /* Read characteristic */
+                .uuid = &g_chr_read_uuid.u,
+                .access_cb = gatt_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+                .val_handle = &g_chr_read_handle,
+            },
+            {
+                /* Write characteristic */
+                .uuid = &g_chr_write_uuid.u,
+                .access_cb = gatt_chr_access,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .val_handle = &g_chr_write_handle,
+            },
+            {
+                0, /* No more characteristics */
+            },
+        },
+    },
+    {
+        0, /* No more services */
+    },
+};
+
+/****************************************************************************
+ * Name: gatt_chr_access
+ *
+ * Description:
+ *   GATT characteristic access callback. Handles read/write requests.
+ *
+ * Parameters:
+ *   conn_handle - Connection handle
+ *   attr_handle - Attribute handle
+ *   ctxt - GATT access context
+ *   arg - User argument (unused)
+ *
+ * Returns:
+ *   0 on success, BLE_ATT_ERR_* on failure
+ ****************************************************************************/
+
+static int gatt_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    const ble_uuid_t *uuid = ctxt->chr->uuid;
+    int rc;
+
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+
+    /* Read characteristic (0x1235) */
+    if (ble_uuid_cmp(uuid, &g_chr_read_uuid.u) == 0) {
+        if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+            rc = os_mbuf_append(ctxt->om, g_gatt_read_msg,
+                                strlen(g_gatt_read_msg));
+            if (rc != 0) {
+                return BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+            printf("[GATT] Read request: returning '%s'\n", g_gatt_read_msg);
+            return 0;
+        }
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    /* Write characteristic (0x1236) */
+    if (ble_uuid_cmp(uuid, &g_chr_write_uuid.u) == 0) {
+        if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+            uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+            if (len > sizeof(g_gatt_command) - 1) {
+                len = sizeof(g_gatt_command) - 1;
+            }
+
+            rc = ble_hs_mbuf_to_flat(ctxt->om, g_gatt_command, len, NULL);
+            if (rc != 0) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+
+            g_gatt_command[len] = '\0';
+            g_gatt_command_len = len;
+
+            printf("[GATT] Write request: received '%s' (%d bytes)\n",
+                   g_gatt_command, len);
+            return 0;
+        }
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_gatt_get_command
+ *
+ * Description:
+ *   Get the last command received via GATT write.
+ *
+ * Parameters:
+ *   buf     - Buffer to store the command
+ *   buf_len - Size of the buffer
+ *
+ * Returns:
+ *   Length of command copied, or 0 if no command available
+ ****************************************************************************/
+
+int rust_ble_wrapper_gatt_get_command(uint8_t *buf, int buf_len)
+{
+    int len = g_gatt_command_len;
+    if (len == 0 || buf == NULL || buf_len <= 0) {
+        return 0;
+    }
+
+    if (len > buf_len - 1) {
+        len = buf_len - 1;
+    }
+
+    memcpy(buf, g_gatt_command, len);
+    buf[len] = '\0';
+
+    /* Clear command after reading */
+    g_gatt_command_len = 0;
+
+    return len;
+}
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_gatt_has_command
+ *
+ * Description:
+ *   Check if there is a pending GATT command.
+ *
+ * Returns:
+ *   1 if command is available, 0 otherwise
+ ****************************************************************************/
+
+int rust_ble_wrapper_gatt_has_command(void)
+{
+    return g_gatt_command_len > 0 ? 1 : 0;
+}
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_gatt_set_read_msg
+ *
+ * Description:
+ *   Set the message returned by GATT read operations.
+ *
+ * Parameters:
+ *   msg - The message to return on read (NULL to reset to default)
+ *
+ * Returns:
+ *   0 on success
+ ****************************************************************************/
+
+static char g_gatt_read_msg_buf[64] = "Hello from RustCam!";
+
+int rust_ble_wrapper_gatt_set_read_msg(const char *msg)
+{
+    if (msg == NULL || msg[0] == '\0') {
+        strncpy(g_gatt_read_msg_buf, "Hello from RustCam!",
+                sizeof(g_gatt_read_msg_buf) - 1);
+    } else {
+        strncpy(g_gatt_read_msg_buf, msg, sizeof(g_gatt_read_msg_buf) - 1);
+    }
+    g_gatt_read_msg_buf[sizeof(g_gatt_read_msg_buf) - 1] = '\0';
+    g_gatt_read_msg = g_gatt_read_msg_buf;
+    return 0;
+}
 
 /****************************************************************************
  * Name: rust_ble_wrapper_init
@@ -117,6 +320,23 @@ int rust_ble_wrapper_init(void)
     /* Initialize GAP and GATT services */
     ble_svc_gap_init();
     ble_svc_gatt_init();
+
+    /* Register our custom GATT services */
+    rc = ble_gatts_count_cfg(g_gatt_svcs);
+    if (rc != 0) {
+        printf("[BLE] Failed to count GATT services: %d\n", rc);
+        return -rc;
+    }
+
+    rc = ble_gatts_add_svcs(g_gatt_svcs);
+    if (rc != 0) {
+        printf("[BLE] Failed to add GATT services: %d\n", rc);
+        return -rc;
+    }
+
+    printf("[BLE] Custom GATT service registered (UUID: 0x1234)\n");
+    printf("[BLE]   - Read char UUID: 0x1235\n");
+    printf("[BLE]   - Write char UUID: 0x1236\n");
 
     /* Set device name */
     rc = ble_svc_gap_device_name_set(g_device_name);
@@ -661,6 +881,31 @@ void rust_ble_wrapper_run(void)
     printf("[BLE] Native BLE - no host thread needed\n");
 }
 
+/****************************************************************************
+ * GATT Functions for Native Bluetooth
+ * Note: Full GATT support requires NimBLE. These are stubs.
+ ****************************************************************************/
+
+int rust_ble_wrapper_gatt_get_command(uint8_t *buf, int buf_len)
+{
+    /* GATT not fully supported with native Bluetooth stack */
+    (void)buf;
+    (void)buf_len;
+    return 0;
+}
+
+int rust_ble_wrapper_gatt_has_command(void)
+{
+    return 0;
+}
+
+int rust_ble_wrapper_gatt_set_read_msg(const char *msg)
+{
+    (void)msg;
+    printf("[BLE] Note: Full GATT support requires NimBLE configuration\n");
+    return 0;
+}
+
 #else /* Neither NimBLE nor native Bluetooth */
 
 /* Stub implementations when no BLE backend is enabled */
@@ -694,6 +939,24 @@ int rust_ble_wrapper_is_connected(void)
 
 void rust_ble_wrapper_run(void)
 {
+}
+
+int rust_ble_wrapper_gatt_get_command(uint8_t *buf, int buf_len)
+{
+    (void)buf;
+    (void)buf_len;
+    return 0;
+}
+
+int rust_ble_wrapper_gatt_has_command(void)
+{
+    return 0;
+}
+
+int rust_ble_wrapper_gatt_set_read_msg(const char *msg)
+{
+    (void)msg;
+    return 0;
 }
 
 #endif /* CONFIG_NIMBLE / CONFIG_WIRELESS_BLUETOOTH */
