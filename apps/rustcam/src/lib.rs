@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 // Hardware Abstraction Layer (shared crate)
 use hal::{get_heap_stats, get_heap_used};
+use hal::ble;
 
 // ============================================================================
 // Common types
@@ -201,8 +202,8 @@ pub fn run() -> i32 {
     println!("---------------------------------------------\n");
 
     // Interactive demo
-    println!("=== Interactive Thread Demo ===");
-    println!("Commands: s=spawn, t=terminate, m=memory, q=quit\n");
+    println!("=== Interactive Demo ===");
+    println!("Commands: s=spawn, t=terminate, m=memory, b=ble scan, a=advertise, g=gatt server, q=quit\n");
 
     let mut threads: Vec<ThreadInstance> = Vec::new();
     let mut next_id: u32 = 1;
@@ -299,6 +300,103 @@ pub fn run() -> i32 {
                 }
             }
 
+            "b" => {
+                println!("Initializing BLE...");
+                match ble::ble_initialize() {
+                    Ok(()) => println!("  BLE initialized"),
+                    Err(ble::BleError::AlreadyInitialized) => println!("  BLE already initialized"),
+                    Err(e) => {
+                        println!("  BLE init failed: {}", e);
+                        println!("  (Try running with sudo for raw socket access)");
+                        continue;
+                    }
+                }
+
+                println!("Scanning for BLE devices (3 seconds)...");
+                match ble::ble_start_scan(3000) {
+                    Ok(()) => {
+                        match ble::ble_get_scan_results() {
+                            Ok(results) => {
+                                if results.is_empty() {
+                                    println!("  No devices found");
+                                } else {
+                                    println!("  Found {} device(s):", results.len());
+                                    for result in &results {
+                                        let name = result.name_str().unwrap_or("<unknown>");
+                                        println!(
+                                            "    {} ({:?}) RSSI: {} dBm  Name: {}",
+                                            result.address, result.address_type, result.rssi, name
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => println!("  Failed to get results: {}", e),
+                        }
+                    }
+                    Err(e) => println!("  Scan failed: {}", e),
+                }
+
+                let _ = ble::ble_deinitialize();
+                println!("  BLE deinitialized");
+            }
+
+            "a" => {
+                println!("Initializing BLE for advertising...");
+                match ble::ble_initialize() {
+                    Ok(()) => println!("  BLE initialized"),
+                    Err(ble::BleError::AlreadyInitialized) => println!("  BLE already initialized"),
+                    Err(e) => {
+                        println!("  BLE init failed: {}", e);
+                        println!("  (Try running with sudo for raw socket access)");
+                        continue;
+                    }
+                }
+
+                println!("Starting advertising as 'RustCam'...");
+                match ble::ble_start_advertising("RustCam") {
+                    Ok(()) => {
+                        println!("  Advertising started! Your phone should see 'RustCam'");
+                        println!("  Press Enter to stop advertising...");
+                        let _ = stdout.flush();
+                        let mut dummy = String::new();
+                        let _ = stdin.lock().read_line(&mut dummy);
+                        let _ = ble::ble_stop_advertising();
+                        println!("  Advertising stopped");
+                    }
+                    Err(e) => println!("  Advertising failed: {}", e),
+                }
+
+                let _ = ble::ble_deinitialize();
+                println!("  BLE deinitialized");
+            }
+
+            "g" => {
+                println!("Starting GATT server...");
+                match ble::ble_initialize() {
+                    Ok(()) => println!("  BLE initialized"),
+                    Err(ble::BleError::AlreadyInitialized) => println!("  BLE already initialized"),
+                    Err(e) => {
+                        println!("  BLE init failed: {}", e);
+                        continue;
+                    }
+                }
+
+                println!("  Running GATT server as 'RustCam' (60 seconds timeout)");
+                println!("  Connect from your phone using nRF Connect!");
+                println!("  Service UUID: 0x1234");
+                println!("  - Read characteristic (handle 3): Returns 'Hello from RustCam!'");
+                println!("  - Write characteristic (handle 5): Send commands");
+                println!();
+
+                match ble::ble_run_gatt_server("RustCam", 60000) {
+                    Ok(()) => println!("  GATT server finished"),
+                    Err(e) => println!("  GATT server error: {}", e),
+                }
+
+                let _ = ble::ble_deinitialize();
+                println!("  BLE deinitialized");
+            }
+
             "q" => {
                 for instance in &threads {
                     instance.stop_flag.store(true, Ordering::Relaxed);
@@ -312,7 +410,7 @@ pub fn run() -> i32 {
             }
 
             "" => {}
-            _ => println!("Unknown command. Use 's', 't', 'm', or 'q'"),
+            _ => println!("Unknown command. Use 's', 't', 'm', 'b', 'a', 'g', or 'q'"),
         }
     }
 
@@ -324,9 +422,155 @@ pub fn run() -> i32 {
 // Platform-specific entry points
 // ============================================================================
 
-/// NuttX entry point
+// FFI debug helper
+#[cfg(feature = "platform-nuttx")]
+extern "C" {
+    fn rust_debug_print(msg: *const u8);
+}
+
+/// NuttX entry point (called from C wrapper)
 #[cfg(feature = "platform-nuttx")]
 #[no_mangle]
-pub extern "C" fn rustcam_main(_argc: i32, _argv: *const *const u8) -> i32 {
-    run()
+pub extern "C" fn rust_rustcam_main(_argc: i32, _argv: *const *const u8) -> i32 {
+    // Debug: print before any std usage
+    unsafe {
+        rust_debug_print(b"rust_rustcam_main entered\0".as_ptr());
+    }
+
+    // Try raw libc write to stdout (fd 1)
+    unsafe {
+        rust_debug_print(b"Before raw write\0".as_ptr());
+        extern "C" {
+            fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+        }
+        let msg = b"Raw write to stdout\n";
+        let ret = write(1, msg.as_ptr(), msg.len());
+        if ret >= 0 {
+            rust_debug_print(b"raw write succeeded\0".as_ptr());
+        } else {
+            rust_debug_print(b"raw write failed\0".as_ptr());
+        }
+    }
+
+    // Test pthread key operations directly
+    unsafe {
+        rust_debug_print(b"Testing pthread_key_create\0".as_ptr());
+        extern "C" {
+            fn pthread_key_create(key: *mut u32, dtor: extern "C" fn(*mut u8)) -> i32;
+            fn pthread_getspecific(key: u32) -> *mut u8;
+            fn pthread_setspecific(key: u32, val: *mut u8) -> i32;
+        }
+
+        extern "C" fn dummy_dtor(_: *mut u8) {}
+
+        let mut key: u32 = 0;
+        let ret = pthread_key_create(&mut key as *mut u32, dummy_dtor);
+        if ret == 0 {
+            rust_debug_print(b"pthread_key_create succeeded\0".as_ptr());
+        } else {
+            rust_debug_print(b"pthread_key_create FAILED\0".as_ptr());
+        }
+
+        let val = 0x12345678u32 as *mut u8;
+        let ret = pthread_setspecific(key, val);
+        if ret == 0 {
+            rust_debug_print(b"pthread_setspecific succeeded\0".as_ptr());
+        } else {
+            rust_debug_print(b"pthread_setspecific FAILED\0".as_ptr());
+        }
+
+        let got = pthread_getspecific(key);
+        if got == val {
+            rust_debug_print(b"pthread_getspecific matched\0".as_ptr());
+        } else {
+            rust_debug_print(b"pthread_getspecific MISMATCH\0".as_ptr());
+        }
+    }
+
+    // Test getting thread ID
+    unsafe {
+        rust_debug_print(b"Testing pthread_self\0".as_ptr());
+        extern "C" {
+            fn pthread_self() -> u32;
+        }
+        let tid = pthread_self();
+        rust_debug_print(b"pthread_self succeeded\0".as_ptr());
+    }
+
+    // Try a minimal box allocation
+    unsafe {
+        rust_debug_print(b"Testing Box allocation\0".as_ptr());
+    }
+    let boxed: Box<u32> = Box::new(42);
+    unsafe {
+        rust_debug_print(b"Box allocation succeeded\0".as_ptr());
+    }
+    drop(boxed);
+    unsafe {
+        rust_debug_print(b"Box drop succeeded\0".as_ptr());
+    }
+
+    // Try Vec
+    unsafe {
+        rust_debug_print(b"Testing Vec\0".as_ptr());
+    }
+    let mut v: Vec<u32> = Vec::new();
+    v.push(1);
+    v.push(2);
+    unsafe {
+        rust_debug_print(b"Vec succeeded\0".as_ptr());
+    }
+
+    // Test BLE advertising directly
+    unsafe {
+        rust_debug_print(b"Testing BLE advertising\0".as_ptr());
+    }
+
+    // Initialize BLE
+    match ble::ble_initialize() {
+        Ok(()) => unsafe { rust_debug_print(b"BLE init OK\0".as_ptr()) },
+        Err(ble::BleError::AlreadyInitialized) => unsafe { rust_debug_print(b"BLE already init\0".as_ptr()) },
+        Err(_) => {
+            unsafe { rust_debug_print(b"BLE init FAILED\0".as_ptr()) };
+            return 1;
+        }
+    }
+
+    // Wait for NimBLE host to sync with controller
+    unsafe {
+        rust_debug_print(b"Waiting 5s for host sync...\0".as_ptr());
+        extern "C" {
+            fn sleep(seconds: u32) -> u32;
+        }
+        sleep(5);  // Give more time for HCI socket to establish connection
+    }
+
+    // Start advertising
+    match ble::ble_start_advertising("RustCam") {
+        Ok(()) => unsafe { rust_debug_print(b"BLE advertising started!\0".as_ptr()) },
+        Err(_) => {
+            unsafe { rust_debug_print(b"BLE advertising FAILED\0".as_ptr()) };
+            let _ = ble::ble_deinitialize();
+            return 1;
+        }
+    }
+
+    // Wait for advertising to run
+    unsafe {
+        rust_debug_print(b"Advertising for 15 seconds...\0".as_ptr());
+        extern "C" {
+            fn sleep(seconds: u32) -> u32;
+        }
+        sleep(15);
+    }
+
+    // Stop advertising
+    let _ = ble::ble_stop_advertising();
+    unsafe { rust_debug_print(b"Advertising stopped\0".as_ptr()) };
+
+    // Deinitialize
+    let _ = ble::ble_deinitialize();
+    unsafe { rust_debug_print(b"BLE deinit OK\0".as_ptr()) };
+
+    0
 }

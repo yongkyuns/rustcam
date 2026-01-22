@@ -3,18 +3,23 @@ name = "hal"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "lib.rs"
+
 [features]
 default = ["platform-linux"]
 
 # Platform selection (set by build command, propagated from app)
-platform-linux = ["libc"]
-platform-nuttx = []
+platform-linux = ["libc", "socket2"]
+platform-nuttx = ["libc"]  # No socket2 on NuttX - uses different BLE stack
 
 # HAL modules (apps select which ones they need)
 heap = []
+ble = []
 # led = []      # Future: LED control
 # motor = []    # Future: Motor control
 # gpio = []     # Future: GPIO access
 
 [dependencies]
 libc = { version = "0.2", optional = true }
+socket2 = { version = "0.5", optional = true, features = ["all"] }

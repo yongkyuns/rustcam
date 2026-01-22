@@ -16,3 +16,6 @@ pub mod heap;
 
 #[cfg(feature = "heap")]
 pub use heap::{get_heap_stats, get_heap_used};
+
+#[cfg(feature = "ble")]
+pub mod ble;
