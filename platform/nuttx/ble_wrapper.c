@@ -8,6 +8,7 @@
 #include <nuttx/config.h>
 
 #include <stdio.h>
+#include <stdint.h>
 
 /****************************************************************************
  * Debug helper for Rust FFI
@@ -48,6 +49,8 @@ int rustcam_main(int argc, char *argv[])
 
 #include <pthread.h>
 #include <assert.h>
+
+#include <net/if.h>
 
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
@@ -300,12 +303,32 @@ int rust_ble_wrapper_gatt_set_read_msg(const char *msg)
 int rust_ble_wrapper_init(void)
 {
     int rc;
+    int sock;
+    struct ifreq ifr;
 
     if (g_ble_initialized) {
         return -EALREADY;
     }
 
     printf("[BLE] Initializing NimBLE...\n");
+
+    /* Bring up bnep0 interface before initializing NimBLE */
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) {
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, "bnep0", IFNAMSIZ);
+        rc = ioctl(sock, SIOCGIFFLAGS, &ifr);
+        if (rc >= 0) {
+            ifr.ifr_flags |= IFF_UP;
+            rc = ioctl(sock, SIOCSIFFLAGS, &ifr);
+            if (rc < 0) {
+                printf("[BLE] Warning: Failed to bring up bnep0: %d\n", errno);
+            } else {
+                printf("[BLE] Brought up bnep0 interface\n");
+            }
+        }
+        close(sock);
+    }
 
     /* Set HCI socket device to 0 (default Bluetooth interface) */
     ble_hci_sock_set_device(0);
@@ -657,7 +680,7 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
 
 /****************************************************************************
  * NuttX Native Bluetooth Implementation
- * Uses IOCTL interface via bt_ioctl.h
+ * Uses IOCTL interface via bt_ioctl.h and bt_gatt.h for GATT
  ****************************************************************************/
 
 #include <sys/socket.h>
@@ -665,16 +688,270 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
 #include <nuttx/wireless/bluetooth/bt_ioctl.h>
 #include <nuttx/wireless/bluetooth/bt_core.h>
 #include <nuttx/wireless/bluetooth/bt_hci.h>
+#include <nuttx/wireless/bluetooth/bt_uuid.h>
+#include <nuttx/wireless/bluetooth/bt_gatt.h>
 #include <net/if.h>
 
 /* State */
 static volatile int g_ble_initialized = 0;
 static volatile int g_ble_advertising = 0;
+static volatile int g_gatt_registered = 0;
 static int g_bt_sockfd = -1;
 static char g_device_name[32] = "RustCam";
 
 /* BLE interface name - ESP32 BLE typically uses bnep0 */
 #define BT_IFNAME "bnep0"
+
+/* GATT command buffer - stores last received command */
+static uint8_t g_gatt_command[64];
+static volatile uint8_t g_gatt_command_len = 0;
+
+/* GATT read response message */
+static char g_gatt_read_msg_buf[64] = "Hello from RustCam!";
+
+/****************************************************************************
+ * GATT Service Definitions for Native Bluetooth
+ *
+ * Combined GATT table with:
+ * 1. GAP Service (UUID 0x1800) - Required for BLE
+ * 2. RustCam Service (UUID 0x1234) - Custom service with read/write chars
+ *
+ * Handle allocation:
+ *   GAP Service:
+ *   0x0001 - GAP Primary Service
+ *   0x0002 - Device Name Characteristic declaration
+ *   0x0003 - Device Name value
+ *   0x0004 - Appearance Characteristic declaration
+ *   0x0005 - Appearance value
+ *
+ *   RustCam Service:
+ *   0x0010 - Primary Service (0x1234)
+ *   0x0011 - Read Characteristic declaration
+ *   0x0012 - Read Characteristic value (0x1235)
+ *   0x0013 - Write Characteristic declaration
+ *   0x0014 - Write Characteristic value (0x1236)
+ ****************************************************************************/
+
+/* GAP Service handle definitions */
+#define GAP_SVC_HANDLE         0x0001
+#define GAP_NAME_CHR_HANDLE    0x0002
+#define GAP_NAME_VAL_HANDLE    0x0003
+#define GAP_APPEAR_CHR_HANDLE  0x0004
+#define GAP_APPEAR_VAL_HANDLE  0x0005
+
+/* RustCam Service handle definitions */
+#define RUSTCAM_SVC_HANDLE     0x0010
+#define READ_CHR_HANDLE        0x0011
+#define READ_VAL_HANDLE        0x0012
+#define WRITE_CHR_HANDLE       0x0013
+#define WRITE_VAL_HANDLE       0x0014
+
+/* GAP Service UUID: 0x1800 */
+static struct bt_uuid_s g_gap_svc_uuid =
+{
+  .type = BT_UUID_16,
+  .u    = { .u16 = BT_UUID_GAP },
+};
+
+/* GAP Device Name UUID: 0x2A00 */
+static struct bt_uuid_s g_gap_name_uuid =
+{
+  .type = BT_UUID_16,
+  .u    = { .u16 = BT_UUID_GAP_DEVICE_NAME },
+};
+
+/* GAP Appearance UUID: 0x2A01 */
+static struct bt_uuid_s g_gap_appear_uuid =
+{
+  .type = BT_UUID_16,
+  .u    = { .u16 = BT_UUID_GAP_APPEARANCE },
+};
+
+/* GAP Device Name characteristic */
+static struct bt_gatt_chrc_s g_gap_name_chrc =
+{
+  .properties   = BT_GATT_CHRC_READ,
+  .value_handle = GAP_NAME_VAL_HANDLE,
+  .uuid         = &g_gap_name_uuid,
+};
+
+/* GAP Appearance characteristic */
+static struct bt_gatt_chrc_s g_gap_appear_chrc =
+{
+  .properties   = BT_GATT_CHRC_READ,
+  .value_handle = GAP_APPEAR_VAL_HANDLE,
+  .uuid         = &g_gap_appear_uuid,
+};
+
+/* Service UUID: 0x1234 */
+static struct bt_uuid_s g_rustcam_svc_uuid =
+{
+  .type = BT_UUID_16,
+  .u    = { .u16 = 0x1234 },
+};
+
+/* Read characteristic UUID: 0x1235 */
+static struct bt_uuid_s g_read_chr_uuid =
+{
+  .type = BT_UUID_16,
+  .u    = { .u16 = 0x1235 },
+};
+
+/* Write characteristic UUID: 0x1236 */
+static struct bt_uuid_s g_write_chr_uuid =
+{
+  .type = BT_UUID_16,
+  .u    = { .u16 = 0x1236 },
+};
+
+/* Read characteristic declaration */
+static struct bt_gatt_chrc_s g_read_chrc =
+{
+  .properties   = BT_GATT_CHRC_READ,
+  .value_handle = READ_VAL_HANDLE,
+  .uuid         = &g_read_chr_uuid,
+};
+
+/* Write characteristic declaration */
+static struct bt_gatt_chrc_s g_write_chrc =
+{
+  .properties   = BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+  .value_handle = WRITE_VAL_HANDLE,
+  .uuid         = &g_write_chr_uuid,
+};
+
+/* Forward declarations for GATT callbacks */
+static int gap_read_name(FAR struct bt_conn_s *conn,
+                         FAR const struct bt_gatt_attr_s *attr,
+                         FAR void *buf, uint8_t len, uint16_t offset);
+
+static int gap_read_appearance(FAR struct bt_conn_s *conn,
+                               FAR const struct bt_gatt_attr_s *attr,
+                               FAR void *buf, uint8_t len, uint16_t offset);
+
+static int gatt_read_value(FAR struct bt_conn_s *conn,
+                           FAR const struct bt_gatt_attr_s *attr,
+                           FAR void *buf, uint8_t len, uint16_t offset);
+
+static int gatt_write_value(FAR struct bt_conn_s *conn,
+                            FAR const struct bt_gatt_attr_s *attr,
+                            FAR const void *buf, uint8_t len, uint16_t offset);
+
+/* Combined GATT attribute table (GAP + RustCam) */
+static const struct bt_gatt_attr_s g_combined_attrs[] =
+{
+  /* ===== GAP Service (0x1800) ===== */
+  BT_GATT_PRIMARY_SERVICE(GAP_SVC_HANDLE, &g_gap_svc_uuid),
+
+  /* Device Name Characteristic */
+  BT_GATT_CHARACTERISTIC(GAP_NAME_CHR_HANDLE, &g_gap_name_chrc),
+  BT_GATT_DESCRIPTOR(GAP_NAME_VAL_HANDLE, &g_gap_name_uuid, BT_GATT_PERM_READ,
+                     gap_read_name, NULL, NULL),
+
+  /* Appearance Characteristic */
+  BT_GATT_CHARACTERISTIC(GAP_APPEAR_CHR_HANDLE, &g_gap_appear_chrc),
+  BT_GATT_DESCRIPTOR(GAP_APPEAR_VAL_HANDLE, &g_gap_appear_uuid, BT_GATT_PERM_READ,
+                     gap_read_appearance, NULL, NULL),
+
+  /* ===== RustCam Service (0x1234) ===== */
+  BT_GATT_PRIMARY_SERVICE(RUSTCAM_SVC_HANDLE, &g_rustcam_svc_uuid),
+
+  /* Read Characteristic declaration */
+  BT_GATT_CHARACTERISTIC(READ_CHR_HANDLE, &g_read_chrc),
+
+  /* Read Characteristic value (0x1235) */
+  BT_GATT_DESCRIPTOR(READ_VAL_HANDLE, &g_read_chr_uuid, BT_GATT_PERM_READ,
+                     gatt_read_value, NULL, NULL),
+
+  /* Write Characteristic declaration */
+  BT_GATT_CHARACTERISTIC(WRITE_CHR_HANDLE, &g_write_chrc),
+
+  /* Write Characteristic value (0x1236) */
+  BT_GATT_DESCRIPTOR(WRITE_VAL_HANDLE, &g_write_chr_uuid, BT_GATT_PERM_WRITE,
+                     NULL, gatt_write_value, NULL),
+};
+
+/****************************************************************************
+ * GAP Service Callbacks
+ ****************************************************************************/
+
+static int gap_read_name(FAR struct bt_conn_s *conn,
+                         FAR const struct bt_gatt_attr_s *attr,
+                         FAR void *buf, uint8_t len, uint16_t offset)
+{
+  (void)conn;
+  (void)attr;
+
+  return bt_gatt_attr_read(conn, attr, buf, len, offset,
+                           g_device_name, strlen(g_device_name));
+}
+
+static int gap_read_appearance(FAR struct bt_conn_s *conn,
+                               FAR const struct bt_gatt_attr_s *attr,
+                               FAR void *buf, uint8_t len, uint16_t offset)
+{
+  uint16_t appearance = 0;  /* Generic device */
+  (void)conn;
+  (void)attr;
+
+  return bt_gatt_attr_read(conn, attr, buf, len, offset,
+                           &appearance, sizeof(appearance));
+}
+
+/****************************************************************************
+ * Name: gatt_read_value
+ *
+ * Description:
+ *   GATT read callback for the read characteristic (0x1235).
+ *   Returns the current read message.
+ ****************************************************************************/
+
+static int gatt_read_value(FAR struct bt_conn_s *conn,
+                           FAR const struct bt_gatt_attr_s *attr,
+                           FAR void *buf, uint8_t len, uint16_t offset)
+{
+  (void)conn;
+  (void)attr;
+
+  printf("[GATT] Read request: returning '%s'\n", g_gatt_read_msg_buf);
+
+  return bt_gatt_attr_read(conn, attr, buf, len, offset,
+                           g_gatt_read_msg_buf, strlen(g_gatt_read_msg_buf));
+}
+
+/****************************************************************************
+ * Name: gatt_write_value
+ *
+ * Description:
+ *   GATT write callback for the write characteristic (0x1236).
+ *   Stores the received command in the buffer.
+ ****************************************************************************/
+
+static int gatt_write_value(FAR struct bt_conn_s *conn,
+                            FAR const struct bt_gatt_attr_s *attr,
+                            FAR const void *buf, uint8_t len, uint16_t offset)
+{
+  (void)conn;
+  (void)attr;
+  (void)offset;
+
+  if (len > sizeof(g_gatt_command) - 1)
+    {
+      len = sizeof(g_gatt_command) - 1;
+    }
+
+  memcpy(g_gatt_command, buf, len);
+  g_gatt_command[len] = '\0';
+  g_gatt_command_len = len;
+
+  printf("[GATT] Write request: received '%s' (%d bytes)\n",
+         g_gatt_command, len);
+
+  return len;
+}
+
+/* Forward declaration */
+int rust_ble_wrapper_stop_advertising(void);
 
 /****************************************************************************
  * Name: rust_ble_wrapper_init
@@ -700,6 +977,18 @@ int rust_ble_wrapper_init(void)
         int err = errno;
         printf("[BLE] Failed to create socket: %d (%s)\n", err, strerror(err));
         return -err;
+    }
+
+    /* Register combined GATT attributes (GAP + RustCam) */
+    if (!g_gatt_registered) {
+        bt_gatt_register(g_combined_attrs,
+                         sizeof(g_combined_attrs) / sizeof(g_combined_attrs[0]));
+        g_gatt_registered = 1;
+        printf("[BLE] GATT services registered:\n");
+        printf("[BLE]   - GAP Service (0x1800)\n");
+        printf("[BLE]   - RustCam Service (0x1234)\n");
+        printf("[BLE]     - Read characteristic: 0x1235\n");
+        printf("[BLE]     - Write characteristic: 0x1236\n");
     }
 
     g_ble_initialized = 1;
@@ -883,27 +1172,149 @@ void rust_ble_wrapper_run(void)
 
 /****************************************************************************
  * GATT Functions for Native Bluetooth
- * Note: Full GATT support requires NimBLE. These are stubs.
+ ****************************************************************************/
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_gatt_get_command
+ *
+ * Description:
+ *   Get the last command received via GATT write.
+ *
+ * Parameters:
+ *   buf     - Buffer to store the command
+ *   buf_len - Size of the buffer
+ *
+ * Returns:
+ *   Length of command copied, or 0 if no command available
  ****************************************************************************/
 
 int rust_ble_wrapper_gatt_get_command(uint8_t *buf, int buf_len)
 {
-    /* GATT not fully supported with native Bluetooth stack */
-    (void)buf;
-    (void)buf_len;
-    return 0;
+    int len = g_gatt_command_len;
+    if (len == 0 || buf == NULL || buf_len <= 0) {
+        return 0;
+    }
+
+    if (len > buf_len - 1) {
+        len = buf_len - 1;
+    }
+
+    memcpy(buf, g_gatt_command, len);
+    buf[len] = '\0';
+
+    /* Clear command after reading */
+    g_gatt_command_len = 0;
+
+    return len;
 }
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_gatt_has_command
+ *
+ * Description:
+ *   Check if there is a pending GATT command.
+ *
+ * Returns:
+ *   1 if command is available, 0 otherwise
+ ****************************************************************************/
 
 int rust_ble_wrapper_gatt_has_command(void)
 {
-    return 0;
+    return g_gatt_command_len > 0 ? 1 : 0;
 }
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_gatt_set_read_msg
+ *
+ * Description:
+ *   Set the message returned by GATT read operations.
+ *
+ * Parameters:
+ *   msg - The message to return on read (NULL to reset to default)
+ *
+ * Returns:
+ *   0 on success
+ ****************************************************************************/
 
 int rust_ble_wrapper_gatt_set_read_msg(const char *msg)
 {
-    (void)msg;
-    printf("[BLE] Note: Full GATT support requires NimBLE configuration\n");
+    if (msg == NULL || msg[0] == '\0') {
+        strncpy(g_gatt_read_msg_buf, "Hello from RustCam!",
+                sizeof(g_gatt_read_msg_buf) - 1);
+    } else {
+        strncpy(g_gatt_read_msg_buf, msg, sizeof(g_gatt_read_msg_buf) - 1);
+    }
+    g_gatt_read_msg_buf[sizeof(g_gatt_read_msg_buf) - 1] = '\0';
     return 0;
+}
+
+/****************************************************************************
+ * Name: rust_ble_wrapper_debug_print_status
+ *
+ * Description:
+ *   Print debug status information for troubleshooting GATT issues.
+ *   This helps diagnose why GATT operations might not be working.
+ ****************************************************************************/
+
+void rust_ble_wrapper_debug_print_status(void)
+{
+    struct btreq_s btreq;
+    int ret;
+
+    printf("\n========== BLE DEBUG STATUS ==========\n");
+    printf("[BLE] Initialized: %s\n", g_ble_initialized ? "YES" : "NO");
+    printf("[BLE] Advertising: %s\n", g_ble_advertising ? "YES" : "NO");
+    printf("[BLE] GATT Registered: %s\n", g_gatt_registered ? "YES" : "NO");
+    printf("[BLE] Socket FD: %d\n", g_bt_sockfd);
+    printf("[BLE] Device Name: %s\n", g_device_name);
+    printf("[BLE] Read Message: %s\n", g_gatt_read_msg_buf);
+    printf("[BLE] Pending Command: %s (len=%d)\n",
+           g_gatt_command_len > 0 ? (char*)g_gatt_command : "(none)",
+           g_gatt_command_len);
+
+    /* Query BT device info via IOCTL */
+    if (g_bt_sockfd >= 0) {
+        memset(&btreq, 0, sizeof(btreq));
+        strlcpy(btreq.btr_name, BT_IFNAME, sizeof(btreq.btr_name));
+
+        ret = ioctl(g_bt_sockfd, SIOCGBTINFO, (unsigned long)((uintptr_t)&btreq));
+        if (ret >= 0) {
+            printf("\n[HCI] Device Info (from IOCTL):\n");
+            printf("  - BD Address: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                   btreq.btr_bdaddr.val[5], btreq.btr_bdaddr.val[4],
+                   btreq.btr_bdaddr.val[3], btreq.btr_bdaddr.val[2],
+                   btreq.btr_bdaddr.val[1], btreq.btr_bdaddr.val[0]);
+            printf("  - Flags: 0x%04X\n", btreq.btr_flags);
+            printf("  - Free CMD buffers: %d\n", btreq.btr_num_cmd);
+            printf("  - Free ACL buffers: %d (max: %d)\n",
+                   btreq.btr_num_acl, btreq.btr_max_acl);
+            printf("  - ACL MTU: %d\n", btreq.btr_acl_mtu);
+        } else {
+            printf("\n[HCI] Failed to get device info: %s\n", strerror(errno));
+        }
+    }
+
+    /* Print GATT table info */
+    printf("\n[GATT] Combined Attribute Table:\n");
+    printf("  - GAP Service (0x1800) at handles 0x%04X-0x%04X\n",
+           GAP_SVC_HANDLE, GAP_APPEAR_VAL_HANDLE);
+    printf("    - Device Name (0x2A00): handle 0x%04X\n", GAP_NAME_VAL_HANDLE);
+    printf("    - Appearance (0x2A01): handle 0x%04X\n", GAP_APPEAR_VAL_HANDLE);
+    printf("  - RustCam Service (0x1234) at handles 0x%04X-0x%04X\n",
+           RUSTCAM_SVC_HANDLE, WRITE_VAL_HANDLE);
+    printf("    - Read Char (0x1235): handle 0x%04X\n", READ_VAL_HANDLE);
+    printf("    - Write Char (0x1236): handle 0x%04X\n", WRITE_VAL_HANDLE);
+    printf("  - Total attributes: %zu\n",
+           sizeof(g_combined_attrs) / sizeof(g_combined_attrs[0]));
+
+    printf("\n[DEBUG] To test GATT from another device:\n");
+    printf("  1. Scan: hcitool lescan\n");
+    printf("  2. Connect: gatttool -b <addr> -I\n");
+    printf("  3. In gatttool: connect\n");
+    printf("  4. Discover: primary\n");
+    printf("  5. Read: char-read-hnd 0x0012\n");
+    printf("  6. Write: char-write-cmd 0x0014 48656c6c6f\n");
+    printf("======================================\n\n");
 }
 
 #else /* Neither NimBLE nor native Bluetooth */

@@ -545,28 +545,20 @@ pub extern "C" fn rust_rustcam_main(_argc: i32, _argv: *const *const u8) -> i32 
         sleep(5);  // Give more time for HCI socket to establish connection
     }
 
-    // Start advertising
-    match ble::ble_start_advertising("RustCam") {
-        Ok(()) => unsafe { rust_debug_print(b"BLE advertising started!\0".as_ptr()) },
+    // Run GATT server (will advertise and handle GATT requests)
+    unsafe { rust_debug_print(b"Starting GATT server for 60s...\0".as_ptr()) };
+    unsafe { rust_debug_print(b"Connect with nRF Connect app!\0".as_ptr()) };
+    unsafe { rust_debug_print(b"Service: 0x1234\0".as_ptr()) };
+    unsafe { rust_debug_print(b"Read char: 0x1235, Write char: 0x1236\0".as_ptr()) };
+
+    match ble::ble_run_gatt_server("RustCam", 60000) {
+        Ok(()) => unsafe { rust_debug_print(b"GATT server finished\0".as_ptr()) },
         Err(_) => {
-            unsafe { rust_debug_print(b"BLE advertising FAILED\0".as_ptr()) };
+            unsafe { rust_debug_print(b"GATT server FAILED\0".as_ptr()) };
             let _ = ble::ble_deinitialize();
             return 1;
         }
     }
-
-    // Wait for advertising to run
-    unsafe {
-        rust_debug_print(b"Advertising for 15 seconds...\0".as_ptr());
-        extern "C" {
-            fn sleep(seconds: u32) -> u32;
-        }
-        sleep(15);
-    }
-
-    // Stop advertising
-    let _ = ble::ble_stop_advertising();
-    unsafe { rust_debug_print(b"Advertising stopped\0".as_ptr()) };
 
     // Deinitialize
     let _ = ble::ble_deinitialize();

@@ -42,6 +42,9 @@ extern "C" {
     /// Set GATT read response message
     fn rust_ble_wrapper_gatt_set_read_msg(msg: *const c_char) -> c_int;
 
+    /// Print debug status information
+    fn rust_ble_wrapper_debug_print_status();
+
     /// Sleep in microseconds
     fn usleep(usec: u32) -> c_int;
 }
@@ -137,6 +140,9 @@ pub fn ble_run_gatt_server(name: &str, timeout_ms: u32) -> BleResult<()> {
 
     // Start advertising
     ble_start_advertising(name)?;
+
+    // Print debug info after advertising starts
+    ble_debug_print_status();
 
     // Poll loop for connection and commands
     let iterations = if timeout_ms == 0 { u32::MAX } else { timeout_ms / 100 };
@@ -236,4 +242,9 @@ pub fn gatt_read_characteristic(_char: CharacteristicHandle) -> BleResult<Vec<u8
 /// Write to a GATT characteristic (central role - not supported)
 pub fn gatt_write_characteristic(_char: CharacteristicHandle, _data: &[u8]) -> BleResult<()> {
     Err(BleError::NotSupported)
+}
+
+/// Print debug status information for troubleshooting GATT issues
+pub fn ble_debug_print_status() {
+    unsafe { rust_ble_wrapper_debug_print_status(); }
 }
