@@ -33,8 +33,9 @@ endif
 WORKSPACE_ROOT = $(CURDIR)/../..
 RUST_TARGET_SPEC = $(CURDIR)/nuttx.json
 
-# Path to the compiled Rust library
-RUST_LIB_PATH = $(WORKSPACE_ROOT)/target/nuttx/release/librustcam.a
+# Path to the compiled Rust library (convert package name: foo-bar -> libfoo_bar.a)
+RUST_LIB_NAME = $(subst -,_,$(RUST_PACKAGE))
+RUST_LIB_PATH = $(WORKSPACE_ROOT)/target/nuttx/release/lib$(RUST_LIB_NAME).a
 
 # Link the Rust library
 IMPORTLIBS += $(RUST_LIB_PATH)

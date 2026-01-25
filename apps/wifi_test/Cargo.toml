@@ -1,0 +1,15 @@
+[package]
+name = "wifi_test"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = ["platform-linux"]
+platform-linux = ["hal/platform-linux"]
+platform-nuttx = ["hal/platform-nuttx"]
+
+[dependencies]
+hal = { path = "../../hal", default-features = false, features = ["heap", "wifi"] }
