@@ -101,9 +101,10 @@ pub enum WifiMode {
 }
 
 /// WiFi authentication mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AuthMode {
     /// Open (no authentication)
+    #[default]
     Open,
     /// WEP (deprecated)
     Wep,
@@ -120,7 +121,7 @@ pub enum AuthMode {
 }
 
 /// WiFi scan result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ScanResult {
     /// SSID (network name)
     pub ssid: [u8; 32],
