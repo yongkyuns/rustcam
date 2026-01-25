@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 // Hardware Abstraction Layer (shared crate)
 use hal::{get_heap_stats, get_heap_used};
 use hal::ble;
+use hal::wifi;
 
 // ============================================================================
 // Common types
@@ -203,7 +204,7 @@ pub fn run() -> i32 {
 
     // Interactive demo
     println!("=== Interactive Demo ===");
-    println!("Commands: s=spawn, t=terminate, m=memory, b=ble scan, a=advertise, g=gatt server, q=quit\n");
+    println!("Commands: s=spawn, t=terminate, m=memory, b=ble scan, a=advertise, g=gatt server, w=wifi, q=quit\n");
 
     let mut threads: Vec<ThreadInstance> = Vec::new();
     let mut next_id: u32 = 1;
@@ -397,6 +398,128 @@ pub fn run() -> i32 {
                 println!("  BLE deinitialized");
             }
 
+            "w" => {
+                println!("WiFi Test");
+                println!("=========");
+
+                // Initialize WiFi
+                println!("Initializing WiFi...");
+                match wifi::wifi_initialize() {
+                    Ok(()) => println!("  WiFi initialized"),
+                    Err(e) => {
+                        println!("  WiFi init failed: {:?}", e);
+                        continue;
+                    }
+                }
+
+                // Scan first to find the network
+                println!("Scanning for networks...");
+                match wifi::wifi_start_scan() {
+                    Ok(()) => println!("  Scan started"),
+                    Err(e) => {
+                        println!("  Scan failed: {:?}", e);
+                        continue;
+                    }
+                }
+
+                // Wait for scan to complete
+                for i in 0..20 {
+                    thread::sleep(Duration::from_millis(300));
+                    match wifi::wifi_scan_is_complete() {
+                        Ok(true) => {
+                            println!("  Scan complete after {}ms", (i + 1) * 300);
+                            break;
+                        }
+                        Ok(false) => {
+                            if i == 19 {
+                                println!("  Timeout waiting for scan");
+                            }
+                        }
+                        Err(e) => {
+                            println!("  Scan error: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+
+                // Get scan results
+                match wifi::wifi_get_scan_results() {
+                    Ok((results, count)) => {
+                        println!("  Found {} networks:", count);
+                        for i in 0..count {
+                            let r = &results[i];
+                            let ssid = r.ssid_str().unwrap_or("<hidden>");
+                            println!(
+                                "    {:2}. {:32} ch{:2} {:3}dBm",
+                                i + 1, ssid, r.channel, r.rssi
+                            );
+                        }
+                    }
+                    Err(e) => println!("  Failed to get results: {:?}", e),
+                }
+
+                // Connect to eduheim
+                println!("\nConnecting to 'eduheim' with WPA2...");
+                let config = wifi::StationConfig::new("eduheim", "10220727");
+                match wifi::wifi_connect(&config) {
+                    Ok(()) => println!("  Connection initiated"),
+                    Err(e) => {
+                        println!("  Connection failed: {:?}", e);
+                        continue;
+                    }
+                }
+
+                // Wait for connection
+                println!("Waiting for connection...");
+                for i in 0..30 {
+                    thread::sleep(Duration::from_millis(500));
+                    match wifi::wifi_get_connection_status() {
+                        Ok(wifi::ConnectionStatus::Connected) => {
+                            println!("  Connected after {}ms!", (i + 1) * 500);
+
+                            // Get IP info
+                            match wifi::wifi_get_ip_info() {
+                                Ok(ip) => {
+                                    println!("  IP: {}.{}.{}.{}", ip.ip[0], ip.ip[1], ip.ip[2], ip.ip[3]);
+                                    println!("  Netmask: {}.{}.{}.{}", ip.netmask[0], ip.netmask[1], ip.netmask[2], ip.netmask[3]);
+                                }
+                                Err(_) => println!("  (IP info not available yet)"),
+                            }
+                            break;
+                        }
+                        Ok(wifi::ConnectionStatus::Connecting) => {
+                            if i % 4 == 0 {
+                                println!("  Still connecting...");
+                            }
+                        }
+                        Ok(wifi::ConnectionStatus::Disconnected) => {
+                            if i >= 10 {
+                                println!("  Connection not established after 5s");
+                                // Check ESSID to see if it was set
+                                if let Ok((essid, len)) = wifi::wifi_get_essid() {
+                                    if len > 0 {
+                                        if let Ok(s) = core::str::from_utf8(&essid[..len]) {
+                                            println!("  ESSID set to: {}", s);
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        Ok(wifi::ConnectionStatus::Failed) => {
+                            println!("  Connection failed");
+                            break;
+                        }
+                        Err(e) => {
+                            println!("  Status error: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+
+                println!("WiFi test done\n");
+            }
+
             "q" => {
                 for instance in &threads {
                     instance.stop_flag.store(true, Ordering::Relaxed);
@@ -410,7 +533,7 @@ pub fn run() -> i32 {
             }
 
             "" => {}
-            _ => println!("Unknown command. Use 's', 't', 'm', 'b', 'a', 'g', or 'q'"),
+            _ => println!("Unknown command. Use 's', 't', 'm', 'b', 'a', 'g', 'w', or 'q'"),
         }
     }
 
@@ -432,137 +555,140 @@ extern "C" {
 #[cfg(feature = "platform-nuttx")]
 #[no_mangle]
 pub extern "C" fn rust_rustcam_main(_argc: i32, _argv: *const *const u8) -> i32 {
-    // Debug: print before any std usage
     unsafe {
         rust_debug_print(b"rust_rustcam_main entered\0".as_ptr());
     }
 
-    // Try raw libc write to stdout (fd 1)
-    unsafe {
-        rust_debug_print(b"Before raw write\0".as_ptr());
-        extern "C" {
-            fn write(fd: i32, buf: *const u8, count: usize) -> isize;
-        }
-        let msg = b"Raw write to stdout\n";
-        let ret = write(1, msg.as_ptr(), msg.len());
-        if ret >= 0 {
-            rust_debug_print(b"raw write succeeded\0".as_ptr());
-        } else {
-            rust_debug_print(b"raw write failed\0".as_ptr());
-        }
-    }
+    // Run WiFi connection test directly
+    wifi_test_nuttx()
+}
 
-    // Test pthread key operations directly
-    unsafe {
-        rust_debug_print(b"Testing pthread_key_create\0".as_ptr());
-        extern "C" {
-            fn pthread_key_create(key: *mut u32, dtor: extern "C" fn(*mut u8)) -> i32;
-            fn pthread_getspecific(key: u32) -> *mut u8;
-            fn pthread_setspecific(key: u32, val: *mut u8) -> i32;
-        }
+/// Simple WiFi test for NuttX (no interactive input needed)
+#[cfg(feature = "platform-nuttx")]
+fn wifi_test_nuttx() -> i32 {
+    unsafe { rust_debug_print(b"Starting WiFi test...\0".as_ptr()); }
 
-        extern "C" fn dummy_dtor(_: *mut u8) {}
-
-        let mut key: u32 = 0;
-        let ret = pthread_key_create(&mut key as *mut u32, dummy_dtor);
-        if ret == 0 {
-            rust_debug_print(b"pthread_key_create succeeded\0".as_ptr());
-        } else {
-            rust_debug_print(b"pthread_key_create FAILED\0".as_ptr());
-        }
-
-        let val = 0x12345678u32 as *mut u8;
-        let ret = pthread_setspecific(key, val);
-        if ret == 0 {
-            rust_debug_print(b"pthread_setspecific succeeded\0".as_ptr());
-        } else {
-            rust_debug_print(b"pthread_setspecific FAILED\0".as_ptr());
-        }
-
-        let got = pthread_getspecific(key);
-        if got == val {
-            rust_debug_print(b"pthread_getspecific matched\0".as_ptr());
-        } else {
-            rust_debug_print(b"pthread_getspecific MISMATCH\0".as_ptr());
-        }
-    }
-
-    // Test getting thread ID
-    unsafe {
-        rust_debug_print(b"Testing pthread_self\0".as_ptr());
-        extern "C" {
-            fn pthread_self() -> u32;
-        }
-        let tid = pthread_self();
-        rust_debug_print(b"pthread_self succeeded\0".as_ptr());
-    }
-
-    // Try a minimal box allocation
-    unsafe {
-        rust_debug_print(b"Testing Box allocation\0".as_ptr());
-    }
-    let boxed: Box<u32> = Box::new(42);
-    unsafe {
-        rust_debug_print(b"Box allocation succeeded\0".as_ptr());
-    }
-    drop(boxed);
-    unsafe {
-        rust_debug_print(b"Box drop succeeded\0".as_ptr());
-    }
-
-    // Try Vec
-    unsafe {
-        rust_debug_print(b"Testing Vec\0".as_ptr());
-    }
-    let mut v: Vec<u32> = Vec::new();
-    v.push(1);
-    v.push(2);
-    unsafe {
-        rust_debug_print(b"Vec succeeded\0".as_ptr());
-    }
-
-    // Test BLE advertising directly
-    unsafe {
-        rust_debug_print(b"Testing BLE advertising\0".as_ptr());
-    }
-
-    // Initialize BLE
-    match ble::ble_initialize() {
-        Ok(()) => unsafe { rust_debug_print(b"BLE init OK\0".as_ptr()) },
-        Err(ble::BleError::AlreadyInitialized) => unsafe { rust_debug_print(b"BLE already init\0".as_ptr()) },
-        Err(_) => {
-            unsafe { rust_debug_print(b"BLE init FAILED\0".as_ptr()) };
+    // Initialize WiFi
+    unsafe { rust_debug_print(b"Initializing WiFi...\0".as_ptr()); }
+    match wifi::wifi_initialize() {
+        Ok(()) => unsafe { rust_debug_print(b"  WiFi initialized OK\0".as_ptr()); },
+        Err(e) => {
+            unsafe { rust_debug_print(b"  WiFi init FAILED\0".as_ptr()); }
             return 1;
         }
     }
 
-    // Wait for NimBLE host to sync with controller
-    unsafe {
-        rust_debug_print(b"Waiting 5s for host sync...\0".as_ptr());
-        extern "C" {
-            fn sleep(seconds: u32) -> u32;
-        }
-        sleep(5);  // Give more time for HCI socket to establish connection
-    }
-
-    // Run GATT server (will advertise and handle GATT requests)
-    unsafe { rust_debug_print(b"Starting GATT server for 60s...\0".as_ptr()) };
-    unsafe { rust_debug_print(b"Connect with nRF Connect app!\0".as_ptr()) };
-    unsafe { rust_debug_print(b"Service: 0x1234\0".as_ptr()) };
-    unsafe { rust_debug_print(b"Read char: 0x1235, Write char: 0x1236\0".as_ptr()) };
-
-    match ble::ble_run_gatt_server("RustCam", 60000) {
-        Ok(()) => unsafe { rust_debug_print(b"GATT server finished\0".as_ptr()) },
-        Err(_) => {
-            unsafe { rust_debug_print(b"GATT server FAILED\0".as_ptr()) };
-            let _ = ble::ble_deinitialize();
+    // Start scan
+    unsafe { rust_debug_print(b"Starting WiFi scan...\0".as_ptr()); }
+    match wifi::wifi_start_scan() {
+        Ok(()) => unsafe { rust_debug_print(b"  Scan started\0".as_ptr()); },
+        Err(e) => {
+            unsafe { rust_debug_print(b"  Scan FAILED\0".as_ptr()); }
             return 1;
         }
     }
 
-    // Deinitialize
-    let _ = ble::ble_deinitialize();
-    unsafe { rust_debug_print(b"BLE deinit OK\0".as_ptr()) };
+    // Wait for scan to complete
+    unsafe { rust_debug_print(b"Waiting for scan...\0".as_ptr()); }
+    for i in 0..20 {
+        thread::sleep(Duration::from_millis(300));
+        match wifi::wifi_scan_is_complete() {
+            Ok(true) => {
+                unsafe { rust_debug_print(b"  Scan complete!\0".as_ptr()); }
+                break;
+            }
+            Ok(false) => {
+                if i == 19 {
+                    unsafe { rust_debug_print(b"  Scan timeout\0".as_ptr()); }
+                }
+            }
+            Err(_) => {
+                unsafe { rust_debug_print(b"  Scan error\0".as_ptr()); }
+                break;
+            }
+        }
+    }
 
+    // Get scan results
+    unsafe { rust_debug_print(b"Getting scan results...\0".as_ptr()); }
+    match wifi::wifi_get_scan_results() {
+        Ok((results, count)) => {
+            unsafe {
+                extern "C" {
+                    fn printf(format: *const u8, ...) -> i32;
+                }
+                printf(b"Found %d networks:\n\0".as_ptr(), count as i32);
+                for i in 0..count {
+                    let r = &results[i];
+                    if r.ssid_len > 0 {
+                        // Print SSID manually
+                        printf(b"  %d. \0".as_ptr(), (i + 1) as i32);
+                        for j in 0..r.ssid_len {
+                            printf(b"%c\0".as_ptr(), r.ssid[j] as i32);
+                        }
+                        printf(b" ch%d %ddBm\n\0".as_ptr(), r.channel as i32, r.rssi as i32);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            unsafe { rust_debug_print(b"  Get results FAILED\0".as_ptr()); }
+        }
+    }
+
+    // Connect to eduheim
+    unsafe { rust_debug_print(b"\nConnecting to eduheim...\0".as_ptr()); }
+    let config = wifi::StationConfig::new("eduheim", "10220727");
+    match wifi::wifi_connect(&config) {
+        Ok(()) => unsafe { rust_debug_print(b"  Connection initiated\0".as_ptr()); },
+        Err(_) => {
+            unsafe { rust_debug_print(b"  Connection FAILED\0".as_ptr()); }
+            return 1;
+        }
+    }
+
+    // Wait for connection
+    unsafe { rust_debug_print(b"Waiting for connection...\0".as_ptr()); }
+    for i in 0..30 {
+        thread::sleep(Duration::from_millis(500));
+        match wifi::wifi_get_connection_status() {
+            Ok(wifi::ConnectionStatus::Connected) => {
+                unsafe { rust_debug_print(b"  CONNECTED!\0".as_ptr()); }
+
+                // Get IP
+                if let Ok(ip) = wifi::wifi_get_ip_info() {
+                    unsafe {
+                        extern "C" {
+                            fn printf(format: *const u8, ...) -> i32;
+                        }
+                        printf(b"  IP: %d.%d.%d.%d\n\0".as_ptr(),
+                            ip.ip[0] as i32, ip.ip[1] as i32, ip.ip[2] as i32, ip.ip[3] as i32);
+                    }
+                }
+                break;
+            }
+            Ok(wifi::ConnectionStatus::Connecting) => {
+                if i % 4 == 0 {
+                    unsafe { rust_debug_print(b"  Still connecting...\0".as_ptr()); }
+                }
+            }
+            Ok(wifi::ConnectionStatus::Disconnected) => {
+                if i >= 10 {
+                    unsafe { rust_debug_print(b"  Not connected after 5s\0".as_ptr()); }
+                    break;
+                }
+            }
+            Ok(wifi::ConnectionStatus::Failed) => {
+                unsafe { rust_debug_print(b"  Connection failed\0".as_ptr()); }
+                break;
+            }
+            Err(_) => {
+                unsafe { rust_debug_print(b"  Status error\0".as_ptr()); }
+                break;
+            }
+        }
+    }
+
+    unsafe { rust_debug_print(b"\nWiFi test done\0".as_ptr()); }
     0
 }

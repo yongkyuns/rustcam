@@ -578,18 +578,35 @@ fn set_key_ext(fd: i32, alg: u16, key: &[u8]) -> WifiResult<()> {
     Ok(())
 }
 
+// Debug print helper for NuttX
+#[cfg(feature = "platform-nuttx")]
+fn wifi_debug(msg: &[u8]) {
+    extern "C" {
+        fn puts(s: *const u8) -> i32;
+    }
+    unsafe { puts(msg.as_ptr()); }
+}
+
+#[cfg(not(feature = "platform-nuttx"))]
+fn wifi_debug(_msg: &[u8]) {}
+
 /// Connect to WiFi network
 pub fn wifi_connect(config: &StationConfig) -> WifiResult<()> {
+    wifi_debug(b"[WIFI] wifi_connect starting\0");
+
     let fd = make_socket()?;
     let mut req = IwReq::new();
 
     // 1. Set mode to infrastructure (station)
+    wifi_debug(b"[WIFI] Setting mode to INFRA\0");
     req.u.mode = IW_MODE_INFRA;
     let ret = unsafe { ioctl(fd, SIOCSIWMODE, &mut req as *mut IwReq) };
     if ret < 0 {
+        wifi_debug(b"[WIFI] SIOCSIWMODE failed\0");
         close_socket(fd);
         return Err(WifiError::ConfigurationError);
     }
+    wifi_debug(b"[WIFI] Mode set OK\0");
 
     // 2. Set authentication parameters based on auth mode
     let (wpa_version, cipher) = match config.auth_mode {
@@ -603,16 +620,21 @@ pub fn wifi_connect(config: &StationConfig) -> WifiResult<()> {
     };
 
     // Set WPA version
+    wifi_debug(b"[WIFI] Setting WPA version\0");
     if let Err(e) = set_auth_param(fd, IW_AUTH_WPA_VERSION, wpa_version) {
+        wifi_debug(b"[WIFI] WPA version FAILED\0");
         close_socket(fd);
         return Err(e);
     }
+    wifi_debug(b"[WIFI] WPA version OK\0");
 
     // Set cipher for pairwise and group
     if cipher != IW_AUTH_CIPHER_NONE {
+        wifi_debug(b"[WIFI] Setting ciphers\0");
         let _ = set_auth_param(fd, IW_AUTH_CIPHER_PAIRWISE, cipher);
         let _ = set_auth_param(fd, IW_AUTH_CIPHER_GROUP, cipher);
         let _ = set_auth_param(fd, IW_AUTH_KEY_MGMT, IW_AUTH_KEY_MGMT_PSK);
+        wifi_debug(b"[WIFI] Ciphers set\0");
     }
 
     // 3. Set passphrase if using WPA/WPA2
@@ -623,14 +645,18 @@ pub fn wifi_connect(config: &StationConfig) -> WifiResult<()> {
             IW_ENCODE_ALG_PMK
         };
 
+        wifi_debug(b"[WIFI] Setting passphrase\0");
         if let Err(e) = set_key_ext(fd, alg, &config.password[..config.password_len]) {
+            wifi_debug(b"[WIFI] Passphrase FAILED\0");
             close_socket(fd);
             return Err(e);
         }
+        wifi_debug(b"[WIFI] Passphrase OK\0");
     }
 
     // 4. Set channel if specified
     if let Some(channel) = config.channel {
+        wifi_debug(b"[WIFI] Setting channel\0");
         req.u.freq = IwFreq {
             m: channel as i32,
             e: 0,
@@ -642,6 +668,7 @@ pub fn wifi_connect(config: &StationConfig) -> WifiResult<()> {
 
     // 5. Set BSSID if specified
     if let Some(bssid) = config.bssid {
+        wifi_debug(b"[WIFI] Setting BSSID\0");
         req.u.ap_addr = SockAddr {
             sa_family: 1, // ARPHRD_ETHER
             sa_data: [0; 14],
@@ -653,6 +680,7 @@ pub fn wifi_connect(config: &StationConfig) -> WifiResult<()> {
     }
 
     // 6. Set ESSID (this triggers the connection)
+    wifi_debug(b"[WIFI] Setting ESSID\0");
     let mut essid_buf = [0u8; IW_ESSID_MAX_SIZE + 1];
     essid_buf[..config.ssid_len].copy_from_slice(&config.ssid[..config.ssid_len]);
 
@@ -663,12 +691,20 @@ pub fn wifi_connect(config: &StationConfig) -> WifiResult<()> {
     };
 
     let ret = unsafe { ioctl(fd, SIOCSIWESSID, &mut req as *mut IwReq) };
+    let errno_val = if ret < 0 { get_last_errno() } else { 0 };
     close_socket(fd);
 
     if ret < 0 {
+        unsafe {
+            extern "C" {
+                fn printf(format: *const u8, ...) -> i32;
+            }
+            printf(b"[WIFI] ESSID set FAILED, errno=%d\n\0".as_ptr(), errno_val);
+        }
         return Err(WifiError::ConnectionFailed);
     }
 
+    wifi_debug(b"[WIFI] Connection initiated OK\0");
     Ok(())
 }
 
