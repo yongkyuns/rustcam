@@ -13,8 +13,8 @@ MODULE    = $(CONFIG_EXAMPLES_RUSTAPP)
 # Rust package name from Kconfig
 RUST_PACKAGE = $(CONFIG_EXAMPLES_RUSTAPP_NAME)
 
-# C source files (BLE wrapper for NimBLE integration)
-CSRCS = ble_wrapper.c
+# C source files (wrappers for NuttX integration)
+CSRCS = ble_wrapper.c camera_wrapper.c
 
 # Include paths for NimBLE headers
 ifeq ($(CONFIG_NIMBLE),y)
@@ -28,6 +28,7 @@ CFLAGS += -I$(NIMBLE_DIR)/nimble/host/util/include
 CFLAGS += -I$(NIMBLE_DIR)/porting/nimble/include
 CFLAGS += -I$(NIMBLE_DIR)/porting/npl/nuttx/include
 endif
+
 
 # Paths relative to this Makefile location (platform/nuttx/)
 WORKSPACE_ROOT = $(CURDIR)/../..

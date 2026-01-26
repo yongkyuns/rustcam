@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use hal::{get_heap_stats, get_heap_used};
 use hal::ble;
 use hal::wifi;
+use hal::camera;
 
 // ============================================================================
 // Common types
@@ -204,7 +205,7 @@ pub fn run() -> i32 {
 
     // Interactive demo
     println!("=== Interactive Demo ===");
-    println!("Commands: s=spawn, t=terminate, m=memory, b=ble scan, a=advertise, g=gatt server, w=wifi, q=quit\n");
+    println!("Commands: s=spawn, t=terminate, m=memory, b=ble scan, a=advertise, g=gatt server, w=wifi, c=camera, q=quit\n");
 
     let mut threads: Vec<ThreadInstance> = Vec::new();
     let mut next_id: u32 = 1;
@@ -520,6 +521,62 @@ pub fn run() -> i32 {
                 println!("WiFi test done\n");
             }
 
+            "c" => {
+                println!("Camera Test");
+                println!("===========");
+
+                // Initialize camera with VGA JPEG
+                println!("Initializing camera (VGA JPEG)...");
+                let config = camera::CameraConfig::new(
+                    camera::PixelFormat::Jpeg,
+                    camera::Resolution::Vga,
+                );
+
+                match camera::camera_initialize(config) {
+                    Ok(()) => println!("  Camera initialized"),
+                    Err(e) => {
+                        println!("  Camera init failed: {}", e);
+                        continue;
+                    }
+                }
+
+                // Capture a few frames
+                println!("Capturing 3 frames...");
+                for i in 1..=3 {
+                    match camera::camera_capture_frame() {
+                        Ok(frame) => {
+                            println!(
+                                "  Frame {}: {}x{} {:?}, {} bytes",
+                                i, frame.width, frame.height, frame.format, frame.len()
+                            );
+                        }
+                        Err(e) => {
+                            println!("  Frame {} capture failed: {}", i, e);
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+
+                // Get settings
+                println!("Camera settings:");
+                match camera::camera_get_settings() {
+                    Ok(settings) => {
+                        println!("  Brightness: {}", settings.brightness);
+                        println!("  Contrast: {}", settings.contrast);
+                        println!("  Saturation: {}", settings.saturation);
+                    }
+                    Err(e) => println!("  Failed to get settings: {}", e),
+                }
+
+                // Cleanup
+                match camera::camera_deinitialize() {
+                    Ok(()) => println!("  Camera deinitialized"),
+                    Err(e) => println!("  Deinit failed: {}", e),
+                }
+
+                println!("Camera test done\n");
+            }
+
             "q" => {
                 for instance in &threads {
                     instance.stop_flag.store(true, Ordering::Relaxed);
@@ -533,7 +590,7 @@ pub fn run() -> i32 {
             }
 
             "" => {}
-            _ => println!("Unknown command. Use 's', 't', 'm', 'b', 'a', 'g', 'w', or 'q'"),
+            _ => println!("Unknown command. Use 's', 't', 'm', 'b', 'a', 'g', 'w', 'c', or 'q'"),
         }
     }
 
@@ -559,8 +616,13 @@ pub extern "C" fn rust_rustcam_main(_argc: i32, _argv: *const *const u8) -> i32 
         rust_debug_print(b"rust_rustcam_main entered\0".as_ptr());
     }
 
-    // Run WiFi connection test directly
-    wifi_test_nuttx()
+    // Run camera test
+    let cam_result = camera_test_nuttx();
+
+    // Then run WiFi test
+    let wifi_result = wifi_test_nuttx();
+
+    if cam_result != 0 { cam_result } else { wifi_result }
 }
 
 /// Simple WiFi test for NuttX (no interactive input needed)
@@ -690,5 +752,66 @@ fn wifi_test_nuttx() -> i32 {
     }
 
     unsafe { rust_debug_print(b"\nWiFi test done\0".as_ptr()); }
+    0
+}
+
+/// Camera test for NuttX
+#[cfg(feature = "platform-nuttx")]
+fn camera_test_nuttx() -> i32 {
+    unsafe { rust_debug_print(b"Starting Camera test...\0".as_ptr()); }
+
+    // Initialize camera with VGA JPEG
+    unsafe { rust_debug_print(b"Initializing camera (VGA JPEG)...\0".as_ptr()); }
+    let config = camera::CameraConfig::new(
+        camera::PixelFormat::Jpeg,
+        camera::Resolution::Vga,
+    );
+
+    match camera::camera_initialize(config) {
+        Ok(()) => unsafe { rust_debug_print(b"  Camera initialized OK\0".as_ptr()); },
+        Err(_) => {
+            unsafe { rust_debug_print(b"  Camera init FAILED\0".as_ptr()); }
+            return 1;
+        }
+    }
+
+    // Capture a few frames
+    unsafe { rust_debug_print(b"Capturing 3 frames...\0".as_ptr()); }
+    for i in 1..=3 {
+        match camera::camera_capture_frame() {
+            Ok(frame) => {
+                unsafe {
+                    extern "C" {
+                        fn printf(format: *const u8, ...) -> i32;
+                    }
+                    printf(
+                        b"  Frame %d: %dx%d, %d bytes\n\0".as_ptr(),
+                        i,
+                        frame.width as i32,
+                        frame.height as i32,
+                        frame.len() as i32,
+                    );
+                }
+            }
+            Err(_) => {
+                unsafe {
+                    extern "C" {
+                        fn printf(format: *const u8, ...) -> i32;
+                    }
+                    printf(b"  Frame %d capture FAILED\n\0".as_ptr(), i);
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    // Cleanup
+    unsafe { rust_debug_print(b"Deinitializing camera...\0".as_ptr()); }
+    match camera::camera_deinitialize() {
+        Ok(()) => unsafe { rust_debug_print(b"  Camera deinitialized OK\0".as_ptr()); },
+        Err(_) => unsafe { rust_debug_print(b"  Deinit FAILED\0".as_ptr()); },
+    }
+
+    unsafe { rust_debug_print(b"\nCamera test done\0".as_ptr()); }
     0
 }

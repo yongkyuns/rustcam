@@ -17,4 +17,4 @@ platform-nuttx = ["hal/platform-nuttx"]
 
 [dependencies]
 # Specify which HAL modules this app uses (platform is set by features above)
-hal = { path = "../../hal", default-features = false, features = ["heap", "ble", "wifi"] }
+hal = { path = "../../hal", default-features = false, features = ["heap", "ble", "wifi", "camera"] }

@@ -17,6 +17,7 @@ platform-nuttx = ["libc"]  # No socket2 on NuttX - uses different BLE stack
 heap = []
 ble = []
 wifi = []
+camera = []
 # led = []      # Future: LED control
 # motor = []    # Future: Motor control
 # gpio = []     # Future: GPIO access

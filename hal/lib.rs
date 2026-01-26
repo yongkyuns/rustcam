@@ -22,3 +22,6 @@ pub mod ble;
 
 #[cfg(feature = "wifi")]
 pub mod wifi;
+
+#[cfg(feature = "camera")]
+pub mod camera;
