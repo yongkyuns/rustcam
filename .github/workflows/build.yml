@@ -55,8 +55,10 @@ jobs:
         uses: actions/cache@v4
         id: cache-esp-idf
         with:
-          path: ~/esp
-          key: esp-idf-v5.4-esp32s3
+          path: |
+            ~/esp
+            ~/.espressif
+          key: esp-idf-v5.4-esp32s3-v2
 
       - name: Install ESP-IDF
         if: steps.cache-esp-idf.outputs.cache-hit != 'true'
