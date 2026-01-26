@@ -1,6 +1,6 @@
 [submodule "external/nuttx"]
 	path = external/nuttx
-	url = https://github.com/apache/nuttx.git
+	url = git@github.com:yongkyuns/nuttx.git
 [submodule "external/nuttx-apps"]
 	path = external/nuttx-apps
 	url = https://github.com/yongkyuns/nuttx-apps.git
