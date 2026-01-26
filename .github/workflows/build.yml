@@ -58,14 +58,14 @@ jobs:
           path: |
             ~/esp
             ~/.espressif
-          key: esp-idf-v5.4-esp32s3-v2
+          key: esp-idf-v5.3.2-esp32s3
 
       - name: Install ESP-IDF
         if: steps.cache-esp-idf.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/esp
           cd ~/esp
-          git clone -b v5.4 --depth 1 --recursive https://github.com/espressif/esp-idf.git
+          git clone -b v5.3.2 --depth 1 --recursive https://github.com/espressif/esp-idf.git
           cd esp-idf
           ./install.sh esp32s3
 
@@ -82,4 +82,10 @@ jobs:
         run: |
           source ~/esp/esp-idf/export.sh
           export PATH="$GITHUB_WORKSPACE:$PATH"
+          echo "=== Environment Check ==="
+          which xtensa-esp32s3-elf-gcc || echo "xtensa-esp32s3-elf-gcc not found"
+          which rustc
+          rustc --version
+          cargo --version
+          echo "=== Starting Build ==="
           cargo nuttx ${{ matrix.app }}
