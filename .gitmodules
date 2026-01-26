@@ -1,6 +1,8 @@
 [submodule "external/nuttx"]
 	path = external/nuttx
 	url = https://github.com/yongkyuns/nuttx.git
+	branch = master
 [submodule "external/nuttx-apps"]
 	path = external/nuttx-apps
 	url = https://github.com/yongkyuns/nuttx-apps.git
+	branch = master
