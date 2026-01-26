@@ -35,7 +35,7 @@ PLATFORM_DIR="$WORKSPACE_ROOT/platform/nuttx"
 
 # Board configuration
 BOARD="esp32s3-devkit"
-CONFIG="nsh"
+CONFIG="ble"  # Use BLE config as base (includes NimBLE)
 
 # Parse arguments - skip "nuttx" if present (cargo passes subcommand name)
 APP=""
@@ -103,6 +103,17 @@ configure() {
     kconfig-tweak --set-val CONFIG_TLS_NELEM 8
     kconfig-tweak --set-val CONFIG_TLS_NCLEANUP 4
     kconfig-tweak --enable CONFIG_DEV_URANDOM
+
+    # Enable BLE/NimBLE support
+    kconfig-tweak --enable CONFIG_ESPRESSIF_BLE
+    kconfig-tweak --enable CONFIG_WIRELESS_BLUETOOTH
+    kconfig-tweak --enable CONFIG_DRIVERS_BLUETOOTH
+    kconfig-tweak --enable CONFIG_BLUETOOTH_BRIDGE
+    # NimBLE requires WIRELESS_BLUETOOTH_HOST to be disabled
+    kconfig-tweak --disable CONFIG_WIRELESS_BLUETOOTH_HOST
+    kconfig-tweak --enable CONFIG_NIMBLE
+    kconfig-tweak --enable CONFIG_NIMBLE_ROLE_PERIPHERAL
+    kconfig-tweak --enable CONFIG_NIMBLE_ROLE_BROADCASTER
 
     # Enable the Rust app with specified package name
     kconfig-tweak --enable CONFIG_EXAMPLES_RUSTAPP
