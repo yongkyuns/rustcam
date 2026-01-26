@@ -80,12 +80,16 @@ jobs:
 
       - name: Build NuttX firmware (${{ matrix.app }})
         run: |
+          set -x  # Enable command tracing
           source ~/esp/esp-idf/export.sh
           export PATH="$GITHUB_WORKSPACE:$PATH"
           echo "=== Environment Check ==="
-          which xtensa-esp32s3-elf-gcc || echo "xtensa-esp32s3-elf-gcc not found"
+          which xtensa-esp32s3-elf-gcc || echo "ERROR: xtensa-esp32s3-elf-gcc not found"
           which rustc
           rustc --version
           cargo --version
+          echo "=== Submodule Check ==="
+          ls -la external/nuttx/tools/configure.sh || echo "configure.sh missing"
+          ls -la external/nuttx-apps/examples/ | head -10
           echo "=== Starting Build ==="
-          cargo nuttx ${{ matrix.app }}
+          cargo nuttx ${{ matrix.app }} 2>&1 | tee build.log || (tail -100 build.log && exit 1)
