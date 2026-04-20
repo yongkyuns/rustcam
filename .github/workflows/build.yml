@@ -5,10 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   # Fast native Linux build
-  linux:
+  linux-build:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -25,7 +26,29 @@ jobs:
           rustflags: ""  # Don't treat warnings as errors
 
       - name: Build ${{ matrix.app }}
-        run: cargo build -p ${{ matrix.app }}
+        run: cargo build --locked -p ${{ matrix.app }}
+
+  # Host-side smoke checks that do more than plain compilation.
+  linux-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+
+      - name: Compile host test targets
+        run: cargo test --locked --workspace --all-targets --no-run
+
+      - name: Run hello smoke test
+        run: |
+          cargo run --locked -p hello 2>&1 | tee hello.log
+          grep -Eq '^Hello from Rust!$' hello.log
+          grep -Eq '^Current heap usage: [0-9]+ bytes$' hello.log
 
   # NuttX ESP32-S3 firmware build
   nuttx:
