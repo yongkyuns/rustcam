@@ -9,9 +9,11 @@ use super::HeapStats;
 struct MallInfo {
     arena: i32,
     ordblks: i32,
+    aordblks: i32,
     mxordblk: i32,
     uordblks: i32,
     fordblks: i32,
+    usmblks: i32,
 }
 
 extern "C" {
@@ -20,8 +22,7 @@ extern "C" {
 
 /// Get current heap usage in bytes
 pub fn get_heap_used() -> i32 {
-    // NuttX's fordblks tracks used space
-    unsafe { mallinfo().fordblks }
+    unsafe { mallinfo().uordblks }
 }
 
 /// Get detailed heap statistics

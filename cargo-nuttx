@@ -13,7 +13,7 @@
 #   cargo nuttx menuconfig   Run NuttX menuconfig
 #   cargo nuttx clean        Clean NuttX build artifacts
 
-set -e
+set -euo pipefail
 
 # Find workspace root (where Cargo.toml with [workspace] is)
 find_workspace_root() {
@@ -32,10 +32,316 @@ WORKSPACE_ROOT="$(find_workspace_root)"
 NUTTX_DIR="$WORKSPACE_ROOT/external/nuttx"
 APPS_DIR="$WORKSPACE_ROOT/external/nuttx-apps"
 PLATFORM_DIR="$WORKSPACE_ROOT/platform/nuttx"
+PATCHSET_DIR="$WORKSPACE_ROOT/patches/nuttx"
+HOST_OS="$(uname -s)"
 
 # Board configuration
 BOARD="esp32s3-devkit"
 CONFIG="ble"  # Use BLE config as base (includes NimBLE)
+ESP32S3_MODULE="${NUTTX_ESP32S3_MODULE:-wroom1n8r8}"
+
+python_user_bin() {
+    echo "$HOME/.local/bin"
+}
+
+prepend_python_user_bin() {
+    local bin_dir
+    bin_dir="$(python_user_bin)"
+    if [ -d "$bin_dir" ]; then
+        PATH="$bin_dir:$PATH"
+    fi
+}
+
+source_esp_env() {
+    if [ -f "$HOME/export-esp.sh" ]; then
+        # shellcheck disable=SC1090
+        source "$HOME/export-esp.sh"
+    fi
+}
+
+build_jobs() {
+    if command -v nproc >/dev/null 2>&1; then
+        nproc
+    elif [ "$HOST_OS" = "Darwin" ]; then
+        sysctl -n hw.ncpu
+    else
+        echo 1
+    fi
+}
+
+host_configure_flag() {
+    case "$HOST_OS" in
+        Linux)
+            echo "-l"
+            ;;
+        Darwin)
+            echo "-m"
+            ;;
+        *)
+            echo "Unsupported host OS: $HOST_OS" >&2
+            exit 1
+            ;;
+    esac
+}
+
+ensure_kconfig_frontend() {
+    prepend_python_user_bin
+
+    if command -v olddefconfig >/dev/null 2>&1; then
+        return
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Missing Python 3. Install Python 3 or kconfiglib." >&2
+        exit 1
+    fi
+
+    echo "==> Installing Python kconfig frontend (kconfiglib)..."
+    python3 -m pip install --user kconfiglib
+    prepend_python_user_bin
+
+    if ! command -v olddefconfig >/dev/null 2>&1; then
+        echo "Failed to install kconfiglib frontend." >&2
+        exit 1
+    fi
+}
+
+config_file() {
+    echo "$NUTTX_DIR/.config"
+}
+
+config_remove() {
+    local key="$1"
+    local file
+    file="$(config_file)"
+    grep -v -E "^(CONFIG_${key}=|# CONFIG_${key} is not set$)" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+}
+
+config_enable() {
+    local key="$1"
+    local file
+    file="$(config_file)"
+    config_remove "$key"
+    printf 'CONFIG_%s=y\n' "$key" >> "$file"
+}
+
+config_disable() {
+    local key="$1"
+    local file
+    file="$(config_file)"
+    config_remove "$key"
+    printf '# CONFIG_%s is not set\n' "$key" >> "$file"
+}
+
+config_set_val() {
+    local key="$1"
+    local value="$2"
+    local file
+    file="$(config_file)"
+    config_remove "$key"
+    printf 'CONFIG_%s=%s\n' "$key" "$value" >> "$file"
+}
+
+config_set_str() {
+    local key="$1"
+    local value="$2"
+    local file
+    file="$(config_file)"
+    config_remove "$key"
+    printf 'CONFIG_%s="%s"\n' "$key" "$value" >> "$file"
+}
+
+config_disable_many() {
+    local key
+    for key in "$@"; do
+        config_disable "$key"
+    done
+}
+
+esp32s3_module_symbol() {
+    case "$(printf '%s' "$ESP32S3_MODULE" | tr '[:upper:]' '[:lower:]')" in
+        wroom1n4|esp32s3wroom1n4)
+            echo "ARCH_CHIP_ESP32S3WROOM1N4"
+            ;;
+        wroom1n8r2|esp32s3wroom1n8r2)
+            echo "ARCH_CHIP_ESP32S3WROOM1N8R2"
+            ;;
+        wroom1n8r8|esp32s3wroom1n8r8)
+            echo "ARCH_CHIP_ESP32S3WROOM1N8R8"
+            ;;
+        wroom1n16r8|esp32s3wroom1n16r8)
+            echo "ARCH_CHIP_ESP32S3WROOM1N16R8"
+            ;;
+        wroom1n16r16v|esp32s3wroom1n16r16v|wroom1n16r16)
+            echo "ARCH_CHIP_ESP32S3WROOM1N16R16V"
+            ;;
+        wroom2n16r8v|esp32s3wroom2n16r8v)
+            echo "ARCH_CHIP_ESP32S3WROOM2N16R8V"
+            ;;
+        wroom2n32r8v|esp32s3wroom2n32r8v)
+            echo "ARCH_CHIP_ESP32S3WROOM2N32R8V"
+            ;;
+        mini1n8|esp32s3mini1n8)
+            echo "ARCH_CHIP_ESP32S3MINI1N8"
+            ;;
+        *)
+            echo "Unsupported ESP32-S3 module '${ESP32S3_MODULE}'." >&2
+            echo "Supported values: wroom1n4, wroom1n8r2, wroom1n8r8, wroom1n16r8, wroom1n16r16v, wroom2n16r8v, wroom2n32r8v, mini1n8" >&2
+            exit 1
+            ;;
+    esac
+}
+
+esp32s3_psram_mode() {
+    case "$(esp32s3_module_symbol)" in
+        ARCH_CHIP_ESP32S3WROOM1N8R2)
+            echo "quad"
+            ;;
+        ARCH_CHIP_ESP32S3WROOM1N8R8|ARCH_CHIP_ESP32S3WROOM1N16R8|ARCH_CHIP_ESP32S3WROOM1N16R16V|ARCH_CHIP_ESP32S3WROOM2N16R8V|ARCH_CHIP_ESP32S3WROOM2N32R8V)
+            echo "oct"
+            ;;
+        *)
+            echo "none"
+            ;;
+    esac
+}
+
+configure_esp32s3_memory() {
+    local module_symbol
+    local psram_mode
+
+    module_symbol="$(esp32s3_module_symbol)"
+    psram_mode="$(esp32s3_psram_mode)"
+
+    config_disable_many \
+        ARCH_CHIP_ESP32S3WROOM1N4 \
+        ARCH_CHIP_ESP32S3WROOM1N8R2 \
+        ARCH_CHIP_ESP32S3WROOM1N8R8 \
+        ARCH_CHIP_ESP32S3WROOM1N16R8 \
+        ARCH_CHIP_ESP32S3WROOM1N16R16V \
+        ARCH_CHIP_ESP32S3WROOM2N16R8V \
+        ARCH_CHIP_ESP32S3WROOM2N32R8V \
+        ARCH_CHIP_ESP32S3MINI1N8 \
+        ARCH_CHIP_ESP32S3CUSTOM \
+        ESP32S3_FLASH_4M \
+        ESP32S3_FLASH_8M \
+        ESP32S3_FLASH_16M \
+        ESP32S3_FLASH_32M \
+        ESP32S3_PSRAM_2M \
+        ESP32S3_PSRAM_8M \
+        ESP32S3_PSRAM_16M \
+        ESP32S3_SPIRAM \
+        ESP32S3_SPIRAM_MODE_QUAD \
+        ESP32S3_SPIRAM_MODE_OCT \
+        ESP32S3_SPIRAM_SPEED_40M \
+        ESP32S3_SPIRAM_SPEED_80M \
+        ESP32S3_SPIRAM_SPEED_120M \
+        ESP32S3_SPIRAM_BOOT_INIT \
+        ESP32S3_SPIRAM_COMMON_HEAP \
+        ESP32S3_SPIRAM_USER_HEAP \
+        ESP32S3_SPIRAM_IGNORE_NOTFOUND \
+        ESP32S3_SPIRAM_MEMTEST
+
+    config_enable "$module_symbol"
+
+    case "$psram_mode" in
+        quad|oct)
+            config_set_val MM_REGIONS 2
+            config_enable ESP32S3_SPIRAM
+            config_enable ESP32S3_SPIRAM_BOOT_INIT
+            config_enable ESP32S3_SPIRAM_COMMON_HEAP
+            config_enable ESP32S3_SPIRAM_MEMTEST
+            config_enable ESP32S3_SPIRAM_SPEED_80M
+
+            if [ "$psram_mode" = "oct" ]; then
+                config_enable ESP32S3_SPIRAM_MODE_OCT
+            else
+                config_enable ESP32S3_SPIRAM_MODE_QUAD
+            fi
+            ;;
+        *)
+            config_set_val MM_REGIONS 1
+            ;;
+    esac
+}
+
+APPLIED_PATCHES=()
+
+apply_git_patch() {
+    local repo="$1"
+    local patch="$2"
+
+    if git -C "$repo" apply --check "$patch" >/dev/null 2>&1; then
+        echo "==> Applying local patch $(basename "$patch")..."
+        git -C "$repo" apply "$patch"
+        APPLIED_PATCHES+=("$patch")
+        return
+    fi
+
+    if git -C "$repo" apply -R --check "$patch" >/dev/null 2>&1; then
+        return
+    fi
+
+    echo "Patch does not apply cleanly: $patch" >&2
+    exit 1
+}
+
+cleanup_local_nuttx_patches() {
+    local i
+
+    for ((i=${#APPLIED_PATCHES[@]} - 1; i>=0; i--)); do
+        git -C "$NUTTX_DIR" apply -R "${APPLIED_PATCHES[$i]}" >/dev/null 2>&1 || true
+    done
+}
+
+apply_local_nuttx_patches() {
+    if [ ! -d "$PATCHSET_DIR" ]; then
+        return
+    fi
+
+    while IFS= read -r patch; do
+        [ -n "$patch" ] || continue
+        apply_git_patch "$NUTTX_DIR" "$patch"
+    done < <(find "$PATCHSET_DIR" -type f -name '*.patch' | LC_ALL=C sort)
+}
+
+trap cleanup_local_nuttx_patches EXIT
+
+apply_common_config() {
+    local app_name="$1"
+
+    configure_esp32s3_memory
+
+    # Enable required options for Rust std.
+    config_enable SYSTEM_TIME64
+    config_enable FS_LARGEFILE
+    config_set_val TLS_NELEM 8
+    config_set_val TLS_NCLEANUP 4
+    config_enable DEV_URANDOM
+    config_enable SIG_EVTHREAD
+
+    # Prefer the native USB-Serial/JTAG console on ESP32-S3 so the board
+    # is usable over USB-OTG without an external UART adapter.
+    config_enable ESP32S3_USBSERIAL
+    config_disable UART0_SERIAL_CONSOLE
+    config_enable OTHER_SERIAL_CONSOLE
+
+    # Enable BLE/NimBLE support.
+    config_enable ESPRESSIF_BLE
+    config_enable WIRELESS_BLUETOOTH
+    config_enable DRIVERS_BLUETOOTH
+    config_enable BLUETOOTH_BRIDGE
+    config_disable WIRELESS_BLUETOOTH_HOST
+    config_enable NIMBLE
+    config_enable NIMBLE_ROLE_PERIPHERAL
+    config_enable NIMBLE_ROLE_BROADCASTER
+
+    # Enable the Rust app with the requested package name.
+    config_enable EXAMPLES_RUSTAPP
+    config_set_str EXAMPLES_RUSTAPP_NAME "$app_name"
+    config_set_str EXAMPLES_RUSTAPP_PROGNAME "$app_name"
+}
 
 # Parse arguments - skip "nuttx" if present (cargo passes subcommand name)
 APP=""
@@ -52,6 +358,7 @@ done
 # Handle special commands
 case "$CMD" in
     menuconfig)
+        ensure_kconfig_frontend
         cd "$NUTTX_DIR"
         make menuconfig
         exit 0
@@ -88,37 +395,18 @@ setup() {
 configure() {
     local app_name="$1"
     echo "==> Configuring NuttX for ESP32-S3..."
+    echo "==> Module profile: $(esp32s3_module_symbol)"
 
+    ensure_kconfig_frontend
     cd "$NUTTX_DIR"
 
     # Clean any existing config
     make distclean 2>/dev/null || true
 
     # Configure for ESP32-S3 devkit
-    ./tools/configure.sh -l "$BOARD:$CONFIG"
+    ./tools/configure.sh "$(host_configure_flag)" "$BOARD:$CONFIG"
 
-    # Enable required options for Rust std
-    kconfig-tweak --enable CONFIG_SYSTEM_TIME64
-    kconfig-tweak --enable CONFIG_FS_LARGEFILE
-    kconfig-tweak --set-val CONFIG_TLS_NELEM 8
-    kconfig-tweak --set-val CONFIG_TLS_NCLEANUP 4
-    kconfig-tweak --enable CONFIG_DEV_URANDOM
-
-    # Enable BLE/NimBLE support
-    kconfig-tweak --enable CONFIG_ESPRESSIF_BLE
-    kconfig-tweak --enable CONFIG_WIRELESS_BLUETOOTH
-    kconfig-tweak --enable CONFIG_DRIVERS_BLUETOOTH
-    kconfig-tweak --enable CONFIG_BLUETOOTH_BRIDGE
-    # NimBLE requires WIRELESS_BLUETOOTH_HOST to be disabled
-    kconfig-tweak --disable CONFIG_WIRELESS_BLUETOOTH_HOST
-    kconfig-tweak --enable CONFIG_NIMBLE
-    kconfig-tweak --enable CONFIG_NIMBLE_ROLE_PERIPHERAL
-    kconfig-tweak --enable CONFIG_NIMBLE_ROLE_BROADCASTER
-
-    # Enable the Rust app with specified package name
-    kconfig-tweak --enable CONFIG_EXAMPLES_RUSTAPP
-    kconfig-tweak --set-str CONFIG_EXAMPLES_RUSTAPP_NAME "$app_name"
-    kconfig-tweak --set-str CONFIG_EXAMPLES_RUSTAPP_PROGNAME "$app_name"
+    apply_common_config "$app_name"
 
     # Refresh config
     make olddefconfig
@@ -128,6 +416,10 @@ configure() {
 
 # Ensure setup is done
 setup
+
+prepend_python_user_bin
+source_esp_env
+apply_local_nuttx_patches
 
 echo "==> Building $APP for NuttX..."
 
@@ -145,22 +437,18 @@ if [ ! -f "$NUTTX_DIR/.config" ]; then
 else
     # Update app name in existing config
     echo "Updating NuttX config for $APP..."
-    sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_NAME=.*/CONFIG_EXAMPLES_RUSTAPP_NAME=\"$APP\"/" "$NUTTX_DIR/.config"
-    sed -i "s/^CONFIG_EXAMPLES_RUSTAPP_PROGNAME=.*/CONFIG_EXAMPLES_RUSTAPP_PROGNAME=\"$APP\"/" "$NUTTX_DIR/.config"
+    echo "==> Module profile: $(esp32s3_module_symbol)"
+    ensure_kconfig_frontend
+    apply_common_config "$APP"
 fi
 
 # Force rebuild of builtin headers (contains entry point references)
 rm -f "$APPS_DIR/builtin/builtin_list.h" "$APPS_DIR/builtin/builtin_proto.h" 2>/dev/null || true
 make -C "$NUTTX_DIR" olddefconfig
 
-# Source ESP environment if available
-if [ -f ~/export-esp.sh ]; then
-    source ~/export-esp.sh
-fi
-
 # Build NuttX firmware
 echo "Building NuttX firmware..."
-make -C "$NUTTX_DIR" -j$(nproc)
+make -C "$NUTTX_DIR" -j"$(build_jobs)"
 
 echo ""
 echo "Output: $NUTTX_DIR/nuttx.bin"

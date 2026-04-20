@@ -1,0 +1,46 @@
+diff --git a/arch/xtensa/src/esp32s3/esp32s3_psram_octal.c b/arch/xtensa/src/esp32s3/esp32s3_psram_octal.c
+index fbc75823c9..b92dff3512 100644
+--- a/arch/xtensa/src/esp32s3/esp32s3_psram_octal.c
++++ b/arch/xtensa/src/esp32s3/esp32s3_psram_octal.c
+@@ -586,6 +586,32 @@ static void IRAM_ATTR config_psram_spi_phases(void)
+   cache_resume_dcache(0);
+ }
+ 
++/****************************************************************************
++ * Name: flash_set_vendor_required_regs
++ *
++ * Description:
++ *   Re-apply board-specific flash register state after PSRAM init. Older
++ *   NuttX snapshots keep this helper local to the PSRAM driver.
++ *
++ ****************************************************************************/
++
++static inline void flash_set_vendor_required_regs(void)
++{
++#ifdef CONFIG_ESP32S3_FLASH_MODE_OCT
++  esp32s3_bsp_opiflash_set_required_regs();
++
++  SET_PERI_REG_BITS(SPI_MEM_CACHE_FCTRL_REG(1),
++                    SPI_MEM_CACHE_USR_CMD_4BYTE_V,
++                    1,
++                    SPI_MEM_CACHE_USR_CMD_4BYTE_S);
++#else
++  SET_PERI_REG_BITS(SPI_MEM_CACHE_FCTRL_REG(1),
++                    SPI_MEM_CACHE_USR_CMD_4BYTE_V,
++                    0,
++                    SPI_MEM_CACHE_USR_CMD_4BYTE_S);
++#endif
++}
++
+ /****************************************************************************
+  * Public Functions
+  ****************************************************************************/
+@@ -656,7 +682,7 @@ int IRAM_ATTR psram_enable(int mode, int vaddrmode)
+ 
+   /* Flash chip requires MSPI specifically, call this function to set them */
+ 
+-  spi_flash_set_vendor_required_regs();
++  flash_set_vendor_required_regs();
+ 
+   config_psram_spi_phases();
+ 

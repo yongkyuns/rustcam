@@ -1,0 +1,35 @@
+diff --git a/arch/xtensa/src/esp32s3/esp32s3_usbserial.c b/arch/xtensa/src/esp32s3/esp32s3_usbserial.c
+index 647e6a3e1b..28e7ba676b 100644
+--- a/arch/xtensa/src/esp32s3/esp32s3_usbserial.c
++++ b/arch/xtensa/src/esp32s3/esp32s3_usbserial.c
+@@ -49,6 +49,8 @@
+ #include "esp32s3_config.h"
+ #include "esp32s3_irq.h"
+ 
++extern void esp_rom_delay_us(uint32_t us);
++
+ /****************************************************************************
+  * Pre-processor Macros
+  ****************************************************************************/
+@@ -196,6 +198,21 @@ static int esp32s3_interrupt(int irq, void *context, void *arg)
+ 
+ static int esp32s3_setup(struct uart_dev_s *dev)
+ {
++  /* Re-enable the on-chip USB Serial/JTAG pads. Other GPIO/RTC configuration
++   * paths can disable them when GPIO19/20 are repurposed.
++   */
++
++  modifyreg32(USB_SERIAL_JTAG_CONF0_REG, 0,
++              USB_SERIAL_JTAG_USB_PAD_ENABLE |
++              USB_SERIAL_JTAG_DP_PULLUP);
++
++  /* Start from a clean interrupt state before /dev/console is opened. */
++
++  putreg32(UINT32_MAX, USB_SERIAL_JTAG_INT_CLR_REG);
++
++  /* Let the peripheral settle before /dev/console is opened. */
++
++  esp_rom_delay_us(50000);
+   return OK;
+ }
+ 
